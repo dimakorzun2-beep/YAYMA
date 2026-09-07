@@ -12,6 +12,7 @@ import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
 import 'package:yayma/src/features/library/providers/library_provider.dart';
 import 'package:yayma/src/features/spotify/providers/spotify_provider.dart';
 import 'package:yayma/src/rust/api/audio_fx.dart' as rust;
+import 'package:yayma/src/rust/api/content.dart' as rust_content;
 import 'package:yayma/src/rust/api/library.dart' as rust;
 import 'package:yayma/src/rust/api/models.dart';
 import 'package:yayma/src/rust/api/playback.dart' as rust;
@@ -680,7 +681,10 @@ class PlaybackController {
     try {
       final ctx = appContextSignal.value;
       if (ctx == null) return;
-      final details = await rust.getTrackDetails(ctx: ctx, trackId: trackId);
+      final details = await rust_content.getTrackDetails(
+        ctx: ctx,
+        trackId: trackId,
+      );
       await SpotifyController.mirrorLikeToSpotify(
         title: details.title,
         artistNames: details.artists.map((a) => a.name).toList(),

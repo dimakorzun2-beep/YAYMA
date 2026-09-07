@@ -385,7 +385,8 @@ class SpotifyController {
       final results = await rust.search(ctx: ctx, query: track.searchQuery);
       SimpleTrackDto? best;
       var bestScore = 0;
-      for (final candidate in results.tracks) {
+      final yandexTracks = results?.tracks ?? const [];
+      for (final candidate in yandexTracks) {
         final score = _matchScore(candidate, track);
         if (score > bestScore) {
           bestScore = score;
@@ -393,7 +394,7 @@ class SpotifyController {
         }
       }
       if (bestScore >= 40) return best;
-      if (bestScore >= 25 && results.tracks.isNotEmpty) return best;
+      if (bestScore >= 25 && yandexTracks.isNotEmpty) return best;
       return null;
     } on Object catch (_) {
       return null;
