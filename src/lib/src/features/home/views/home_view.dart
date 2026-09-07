@@ -136,7 +136,9 @@ class HomeView extends StatelessWidget {
                           padding: EdgeInsets.only(
                             left: Platform.isAndroid ? 20 : 60,
                             right: Platform.isAndroid ? 20 : 60,
-                            top: Platform.isAndroid ? 20 : 40,
+                            top: Platform.isAndroid
+                                ? 20
+                                : (showLyrics ? 40 : 100),
                             bottom: Platform.isAndroid ? 100 : 40,
                           ),
                           child: Stack(

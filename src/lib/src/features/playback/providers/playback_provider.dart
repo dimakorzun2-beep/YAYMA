@@ -10,6 +10,7 @@ import 'package:yayma/src/features/auth/providers/auth_provider.dart';
 import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
 import 'package:yayma/src/features/library/providers/library_provider.dart';
+import 'package:yayma/src/features/spotify/providers/spotify_provider.dart';
 import 'package:yayma/src/rust/api/audio_fx.dart' as rust;
 import 'package:yayma/src/rust/api/library.dart' as rust;
 import 'package:yayma/src/rust/api/models.dart';
@@ -454,12 +455,7 @@ final EffectCleanup _vibePaletteEffect = effect(() {
       ...c(scheme.secondaryContainer),
       ...c(scheme.tertiaryContainer),
     ];
-    unawaited(
-      rust.setVibePalette(
-        ctx: ctx,
-        colors: Float32List.fromList(p),
-      ),
-    );
+    unawaited(rust.setVibePalette(ctx: ctx, colors: Float32List.fromList(p)));
   }
 });
 
@@ -675,8 +671,23 @@ class PlaybackController {
   static Future<void> toggleRepeat() =>
       runRustAction((ctx) => rust.toggleRepeatMode(ctx: ctx));
   static Future<void> stop() => runRustAction((ctx) => rust.stop(ctx: ctx));
-  static Future<void> toggleLike({required String trackId}) =>
-      runRustAction((ctx) => rust.toggleLike(ctx: ctx, trackId: trackId));
+  static Future<void> toggleLike({required String trackId}) async {
+    await runRustAction((ctx) => rust.toggleLike(ctx: ctx, trackId: trackId));
+    unawaited(_mirrorLikeToSpotify(trackId));
+  }
+
+  static Future<void> _mirrorLikeToSpotify(String trackId) async {
+    try {
+      final ctx = appContextSignal.value;
+      if (ctx == null) return;
+      final details = await rust.getTrackDetails(ctx: ctx, trackId: trackId);
+      await SpotifyController.mirrorLikeToSpotify(
+        title: details.title,
+        artistNames: details.artists.map((a) => a.name).toList(),
+      );
+    } on Object catch (_) {}
+  }
+
   static Future<void> toggleDislike({required String trackId}) =>
       runRustAction((ctx) => rust.toggleDislike(ctx: ctx, trackId: trackId));
 
@@ -691,9 +702,8 @@ class PlaybackController {
       );
   static Future<void> changeVolume(int volume) =>
       runRustAction((ctx) => rust.setVolume(ctx: ctx, volume: volume));
-  static Future<void> changeTransientVolumeGain(int gain) => runRustAction(
-    (ctx) => rust.setTransientVolumeGain(ctx: ctx, gain: gain),
-  );
+  static Future<void> changeTransientVolumeGain(int gain) =>
+      runRustAction((ctx) => rust.setTransientVolumeGain(ctx: ctx, gain: gain));
   static Future<void> seekTo(Duration duration) => runRustAction(
     (ctx) => rust.seek(ctx: ctx, positionMs: duration.inMilliseconds),
   );

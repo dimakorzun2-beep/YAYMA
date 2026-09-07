@@ -8,6 +8,7 @@ import 'package:yayma/src/features/core/views/widgets/responsive.dart';
 import 'package:yayma/src/features/home/providers/home_provider.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
 import 'package:yayma/src/features/playback/providers/wave_provider.dart';
+import 'package:yayma/src/features/spotify/providers/spotify_provider.dart';
 import 'package:yayma/src/rust/api/models.dart';
 
 class WaveSettingsPanel extends StatelessWidget {
@@ -25,6 +26,10 @@ class WaveSettingsPanel extends StatelessWidget {
       builder: (context) {
         final currentSeeds = currentWaveSeedsSignal();
         final isNarrow = context.isNarrow;
+
+        if (musicProviderSignal.value == MusicProvider.spotify) {
+          return const _SpotifyWavePanel();
+        }
 
         return Material(
           color: Colors.transparent,
@@ -384,11 +389,7 @@ class _RoundedChip extends StatelessWidget {
         constraints: BoxConstraints(
           maxWidth: maxLabelWidth > 0 ? maxLabelWidth : 100,
         ),
-        child: Text(
-          item.label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        child: Text(item.label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
       onSelected: (_) {
         unawaited(WaveController.toggleStation(item.seed));
@@ -408,9 +409,9 @@ class _RoundedChip extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       side: isSelected
           ? BorderSide(
-              color: Theme.of(context).colorScheme.onSurface.withValues(
-                alpha: 0.24,
-              ),
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurface.withValues(alpha: 0.24),
             )
           : BorderSide.none,
       showCheckmark: false,
@@ -446,9 +447,7 @@ class _CharacterCard extends StatelessWidget {
           height: 90,
           decoration: BoxDecoration(
             color: isSelected
-                ? Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withValues(alpha: 0.1)
+                ? Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.1)
                 : Theme.of(
                     context,
                   ).colorScheme.onSurface.withValues(alpha: 0.05),
@@ -606,9 +605,7 @@ class _AllStationsSheetState extends State<_AllStationsSheet> {
           height: MediaQuery.of(context).size.height * 0.8,
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(24),
-            ),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: SafeArea(
             child: Column(
@@ -704,11 +701,10 @@ class _AllStationsSheetState extends State<_AllStationsSheet> {
                                     child: Text(
                                       cat.title.toUpperCase(),
                                       style: TextStyle(
-                                        color:
-                                            Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurfaceVariant
-                                                .withValues(alpha: 0.6),
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant
+                                            .withValues(alpha: 0.6),
                                         fontWeight: FontWeight.bold,
                                         letterSpacing: 1.2,
                                         fontSize: 12,
@@ -726,9 +722,7 @@ class _AllStationsSheetState extends State<_AllStationsSheet> {
                                       runSpacing: 8,
                                       children: cat.items.map((item) {
                                         final isSelected = currentSeeds
-                                            .contains(
-                                              item.seed,
-                                            );
+                                            .contains(item.seed);
                                         final maxSheetLabelWidth =
                                             MediaQuery.sizeOf(context).width -
                                             48 -
@@ -755,28 +749,20 @@ class _AllStationsSheetState extends State<_AllStationsSheet> {
                                             );
                                             Navigator.pop(context);
                                           },
-                                          backgroundColor:
-                                              Theme.of(
-                                                    context,
-                                                  ).colorScheme.onSurface
-                                                  .withValues(
-                                                    alpha: 0.05,
-                                                  ),
-                                          selectedColor:
-                                              Theme.of(
-                                                    context,
-                                                  ).colorScheme.onSurface
-                                                  .withValues(
-                                                    alpha: 0.2,
-                                                  ),
+                                          backgroundColor: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withValues(alpha: 0.05),
+                                          selectedColor: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withValues(alpha: 0.2),
                                           labelStyle: TextStyle(
                                             color: isSelected
                                                 ? Theme.of(
                                                     context,
                                                   ).colorScheme.onSurface
-                                                : Theme.of(
-                                                        context,
-                                                      )
+                                                : Theme.of(context)
                                                       .colorScheme
                                                       .onSurfaceVariant,
                                             fontWeight: isSelected
@@ -791,15 +777,10 @@ class _AllStationsSheetState extends State<_AllStationsSheet> {
                                           ),
                                           side: isSelected
                                               ? BorderSide(
-                                                  color:
-                                                      Theme.of(
-                                                            context,
-                                                          )
-                                                          .colorScheme
-                                                          .onSurface
-                                                          .withValues(
-                                                            alpha: 0.24,
-                                                          ),
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurface
+                                                      .withValues(alpha: 0.24),
                                                 )
                                               : BorderSide.none,
                                           showCheckmark: false,
@@ -815,6 +796,80 @@ class _AllStationsSheetState extends State<_AllStationsSheet> {
                             ],
                           ),
                         ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SpotifyWavePanel extends StatelessWidget {
+  const _SpotifyWavePanel();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return SignalBuilder(
+      builder: (context) {
+        final seedArtist = spotifyWaveSeedArtistSignal.value;
+        return Material(
+          color: Colors.transparent,
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Настроить Мою волну',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: cs.onSurface,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Режим Spotify: волна строится от топ-треков артиста.',
+                  style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.graphic_eq_rounded,
+                      color: Color(0xFF1DB954),
+                      size: 22,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Артист: $seedArtist',
+                        style: TextStyle(
+                          color: cs.onSurface,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Изменить артиста можно в настройках Spotify.',
+                  style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () => unawaited(SpotifyController.startMyWave()),
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: const Text('Слушать'),
                 ),
               ],
             ),

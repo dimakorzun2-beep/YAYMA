@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:signals_flutter/signals_flutter.dart';
 import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/features/spotify/providers/spotify_provider.dart';
 import 'package:yayma/src/rust/api/content.dart';
 import 'package:yayma/src/rust/api/models.dart';
 
@@ -27,3 +28,13 @@ void setSearchQuery(String query) {
     searchQuerySignal.value = query;
   });
 }
+
+final FutureSignal<List<SpotifyTrack>?> spotifySearchResultsSignal =
+    futureSignal<List<SpotifyTrack>?>(() async {
+      musicProviderSignal.value;
+      final query = searchQuerySignal.value;
+      if (query.trim().isEmpty) return null;
+      if (musicProviderSignal.value != MusicProvider.spotify) return null;
+
+      return SpotifyController.searchTracks(query);
+    });

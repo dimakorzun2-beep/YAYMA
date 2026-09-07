@@ -10,6 +10,8 @@ import 'package:yayma/src/features/core/views/widgets/track_tile.dart';
 import 'package:yayma/src/features/library/views/add_to_playlist_dialog.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
 import 'package:yayma/src/features/search/providers/search_provider.dart';
+import 'package:yayma/src/features/spotify/providers/spotify_provider.dart';
+import 'package:yayma/src/features/spotify/views/spotify_track_tile.dart';
 import 'package:yayma/src/rust/api/models.dart';
 
 class SearchView extends StatefulWidget {
@@ -38,9 +40,14 @@ class _SearchViewState extends State<SearchView> {
   Widget build(BuildContext context) {
     return SignalBuilder(
       builder: (context) {
-        final searchResultsAsync = searchResultsSignal.value;
         final screenWidth = MediaQuery.sizeOf(context).width;
         final isNarrow = screenWidth < 600;
+
+        if (musicProviderSignal.value == MusicProvider.spotify) {
+          return _SpotifySearchBody(isNarrow: isNarrow);
+        }
+
+        final searchResultsAsync = searchResultsSignal.value;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -54,16 +61,13 @@ class _SearchViewState extends State<SearchView> {
                 children: [
                   Text(
                     'Поиск',
-                    style:
-                        Theme.of(
-                          context,
-                        ).textTheme.displayMedium?.copyWith(
-                          fontSize: isNarrow ? 24 : 48,
-                          fontWeight: FontWeight.w900,
-                          color: Theme.of(context).colorScheme.onSurface,
-                          letterSpacing: -1.5,
-                          height: 1.05,
-                        ),
+                    style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                      fontSize: isNarrow ? 24 : 48,
+                      fontWeight: FontWeight.w900,
+                      color: Theme.of(context).colorScheme.onSurface,
+                      letterSpacing: -1.5,
+                      height: 1.05,
+                    ),
                   ),
                   if (!isNarrow) const SizedBox(height: 24),
                   if (isNarrow) const SizedBox(height: 8),
@@ -248,9 +252,7 @@ class _TrackSearchTile extends StatelessWidget {
       leading: TrackCover(url: track.coverUrl),
       trailing: Text(
         formatDuration(track.durationMs),
-        style: TextStyle(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
+        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
       ),
       hoverActions: [
         IconButton(
@@ -301,6 +303,85 @@ class _ArtistSearchCard extends StatelessWidget {
       isCircle: true,
       size: 140,
       onTap: () => navigateTo(AppSection.artist, artist.id),
+    );
+  }
+}
+
+class _SpotifySearchBody extends StatelessWidget {
+  final bool isNarrow;
+
+  const _SpotifySearchBody({required this.isNarrow});
+
+  @override
+  Widget build(BuildContext context) {
+    return SignalBuilder(
+      builder: (context) {
+        final resultsAsync = spotifySearchResultsSignal.value;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: isNarrow
+                  ? const EdgeInsets.fromLTRB(20, 16, 20, 8)
+                  : EdgeInsets.zero,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.graphic_eq_rounded,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Spotify',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
+                        fontSize: isNarrow ? 18 : 24,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Expanded(
+              child: resultsAsync.map(
+                data: (results) {
+                  if (results == null) return const _EmptySearchState();
+                  if (results.isEmpty) {
+                    return Center(
+                      child: Text(
+                        'В Spotify ничего не найдено',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontSize: 18,
+                        ),
+                      ),
+                    );
+                  }
+                  return ListView.builder(
+                    padding: EdgeInsets.fromLTRB(
+                      isNarrow ? 8 : 32,
+                      4,
+                      isNarrow ? 8 : 32,
+                      140,
+                    ),
+                    itemCount: results.length,
+                    itemBuilder: (context, i) =>
+                        SpotifyTrackTile(track: results[i]),
+                  );
+                },
+                loading: () => const CommonLoadingWidget(),
+                error: (Object e, StackTrace? _) =>
+                    CommonErrorWidget(error: e.toString()),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

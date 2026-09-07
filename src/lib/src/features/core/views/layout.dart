@@ -92,7 +92,7 @@ class _AppLayoutState extends State<AppLayout> {
                   Positioned.fill(
                     child: SafeArea(
                       top: !isCustomTitlebar,
-                      bottom: false,
+                      bottom: true,
                       child: Stack(
                         children: [
                           // 3. Content (set of independent stacks for each tab)
@@ -140,7 +140,7 @@ class _AppLayoutState extends State<AppLayout> {
                                 alignment:
                                     MediaQuery.sizeOf(context).width < 600
                                     ? Alignment.bottomCenter
-                                    : Alignment.centerLeft,
+                                    : Alignment.topCenter,
                                 child: const FloatingNavBar(),
                               );
                             },
@@ -198,9 +198,7 @@ class _RootBucket extends StatelessWidget {
           offstage: !isVisible,
           child: TickerMode(
             enabled: isVisible,
-            child: Stack(
-              children: _buildWindowStack(stack),
-            ),
+            child: Stack(children: _buildWindowStack(stack)),
           ),
         );
       },
@@ -281,16 +279,11 @@ class _AnimatedPlayerBar extends StatelessWidget {
                 : animation;
             return SlideTransition(
               position: offsetAnimation,
-              child: FadeTransition(
-                opacity: opacityAnimation,
-                child: child,
-              ),
+              child: FadeTransition(opacity: opacityAnimation, child: child),
             );
           },
           child: shouldShowBar
-              ? const PlayerBar(
-                  key: ValueKey('player_bar_visible'),
-                )
+              ? const PlayerBar(key: ValueKey('player_bar_visible'))
               : const SizedBox.shrink(key: ValueKey('player_bar_hidden')),
         );
       },
@@ -339,7 +332,7 @@ class _WindowContent extends StatelessWidget {
 
         return Padding(
           padding: EdgeInsets.only(
-            left: (isHome || isNarrow) ? 0 : 96,
+            top: (!isNarrow && !isHome) ? 96.0 : 0,
             bottom: bottomPadding,
           ),
           child: child,
@@ -402,14 +395,12 @@ class _FloatingBackButton extends StatelessWidget {
                 Colors.black,
                 0.4,
               ),
-              hoverColor: Theme.of(
-                context,
-              ).colorScheme.onSurface.withValues(alpha: 0.1),
+              hoverColor: Theme.of(context).colorScheme.onSurface
+                  .withValues(alpha: 0.1),
               padding: const EdgeInsets.all(12),
               side: BorderSide(
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withValues(alpha: 0.1),
+                color: Theme.of(context).colorScheme.onSurface
+                    .withValues(alpha: 0.1),
               ),
             ),
             icon: Icon(

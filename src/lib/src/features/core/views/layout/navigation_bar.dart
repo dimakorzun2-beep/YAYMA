@@ -11,6 +11,7 @@ import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/rust_cached_image.dart';
 import 'package:yayma/src/features/home/providers/home_provider.dart';
+import 'package:yayma/src/features/spotify/providers/spotify_provider.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
 import 'package:yayma/src/features/playback/views/wave_view.dart';
 import 'package:yayma/src/rust/api/models.dart';
@@ -128,12 +129,10 @@ class _FloatingNavBarState extends State<FloatingNavBar>
                       }
                     },
                     style: IconButton.styleFrom(
-                      backgroundColor: Theme.of(
-                        context,
-                      ).colorScheme.primary.withValues(alpha: 0.1),
-                      hoverColor: Theme.of(
-                        context,
-                      ).colorScheme.primary.withValues(alpha: 0.2),
+                      backgroundColor: Theme.of(context).colorScheme.primary
+                          .withValues(alpha: 0.1),
+                      hoverColor: Theme.of(context).colorScheme.primary
+                          .withValues(alpha: 0.2),
                     ),
                     icon: Icon(
                       isWaveActive && isPlaying
@@ -146,7 +145,7 @@ class _FloatingNavBarState extends State<FloatingNavBar>
                 },
               ),
             ),
-          if (isDesktop) const SizedBox(height: 12),
+          if (isDesktop) const SizedBox(width: 12),
           _NavIcon(
             icon: Icons.home_rounded,
             isSelected: currentSection == AppSection.home,
@@ -167,7 +166,7 @@ class _FloatingNavBarState extends State<FloatingNavBar>
             onTap: () => setSection(AppSection.liked),
             isNarrow: isNarrow,
           ),
-          if (isDesktop) const SizedBox(height: 12),
+          if (isDesktop) const SizedBox(width: 12),
           _AccountButton(
             onOpened: () => setState(() => _isAccountMenuOpen = true),
             onClosed: () => setState(() => _isAccountMenuOpen = false),
@@ -181,16 +180,11 @@ class _FloatingNavBarState extends State<FloatingNavBar>
           child: Padding(
             padding: isNarrow
                 ? const EdgeInsets.only(bottom: 12, left: 24, right: 24)
-                : const EdgeInsets.only(
-                    left: 16,
-                    right: 48,
-                    top: 48,
-                    bottom: 48,
-                  ),
+                : const EdgeInsets.only(top: 12, left: 24, right: 24),
             child: AnimatedSlide(
               offset: isVisible
                   ? Offset.zero
-                  : (isNarrow ? const Offset(0, 1.5) : const Offset(-1.5, 0)),
+                  : (isNarrow ? const Offset(0, 1.5) : const Offset(0, -1.5)),
               duration: const Duration(milliseconds: 300),
               curve: Curves.easeOutCubic,
               child: AnimatedOpacity(
@@ -211,12 +205,8 @@ class _FloatingNavBarState extends State<FloatingNavBar>
                           sigmaY: isHome ? 0 : 2,
                         ),
                         child: Container(
-                          width: isNarrow ? null : 64,
-                          height: isNarrow ? 64 : null,
-                          padding: EdgeInsets.symmetric(
-                            vertical: isNarrow ? 0 : 12,
-                            horizontal: isNarrow ? 12 : 0,
-                          ),
+                          height: 64,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
                           decoration: BoxDecoration(
                             color: barColor.withValues(alpha: alpha),
                             borderRadius: BorderRadius.circular(AppRadius.xxxl),
@@ -226,17 +216,11 @@ class _FloatingNavBarState extends State<FloatingNavBar>
                               ),
                             ),
                           ),
-                          child: isNarrow
-                              ? Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceEvenly,
-                                  children: children,
-                                )
-                              : Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: children,
-                                ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: children,
+                          ),
                         ),
                       ),
                     ),
@@ -306,22 +290,37 @@ class _AccountButton extends SignalWidget {
             shape: BoxShape.circle,
           ),
           child: ClipOval(
-            child: account.avatarUrl != null
-                ? RustCachedImage(
-                    imageUrl: account.avatarUrl,
+            child: SignalBuilder(
+              builder: (context) {
+                final isSpotify =
+                    musicProviderSignal.value == MusicProvider.spotify;
+                if (isSpotify) {
+                  return Container(
                     width: 36,
                     height: 36,
-                    errorWidget: Icon(
-                      Icons.person_rounded,
-                      size: 20,
-                      color: cs.onSurfaceVariant,
-                    ),
-                  )
-                : Icon(
-                    Icons.person_rounded,
-                    size: 20,
-                    color: cs.onSurfaceVariant,
-                  ),
+                    color: Colors.black,
+                    alignment: Alignment.center,
+                    child: const Text('\u26BD', style: TextStyle(fontSize: 18)),
+                  );
+                }
+                return account.avatarUrl != null
+                    ? RustCachedImage(
+                        imageUrl: account.avatarUrl,
+                        width: 36,
+                        height: 36,
+                        errorWidget: Icon(
+                          Icons.person_rounded,
+                          size: 20,
+                          color: cs.onSurfaceVariant,
+                        ),
+                      )
+                    : Icon(
+                        Icons.person_rounded,
+                        size: 20,
+                        color: cs.onSurfaceVariant,
+                      );
+              },
+            ),
           ),
         ),
       ),
@@ -340,10 +339,10 @@ class _AccountMenuDialog extends StatelessWidget {
     final isNarrow = MediaQuery.sizeOf(context).width < 600;
 
     return Dialog(
-      alignment: isNarrow ? Alignment.bottomCenter : Alignment.centerLeft,
+      alignment: isNarrow ? Alignment.bottomCenter : Alignment.topCenter,
       insetPadding: isNarrow
           ? const EdgeInsets.symmetric(horizontal: 16, vertical: 24)
-          : const EdgeInsets.only(left: 96),
+          : const EdgeInsets.only(top: 96),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.xxl),
       ),
@@ -433,15 +432,71 @@ class _AccountMenuDialog extends StatelessWidget {
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
-                  icon: Icon(
-                    Icons.close,
-                    color: cs.onSurfaceVariant,
-                    size: 20,
-                  ),
+                  icon: Icon(Icons.close, color: cs.onSurfaceVariant, size: 20),
                 ),
               ],
             ),
             const SizedBox(height: 24),
+            SignalBuilder(
+              builder: (context) {
+                final provider = musicProviderSignal.value;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(left: 12, bottom: 8),
+                      child: Text(
+                        'Музыкальный сервис',
+                        style: TextStyle(
+                          color: cs.onSurfaceVariant,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ),
+                    _MenuTile(
+                      icon: Icons.graphic_eq_rounded,
+                      title: 'Яндекс Музыка',
+                      trailing: provider == MusicProvider.yandex
+                          ? Icon(
+                              Icons.check_circle_rounded,
+                              color: cs.primary,
+                              size: 22,
+                            )
+                          : null,
+                      onTap: () {
+                        SpotifyController.setProvider(MusicProvider.yandex);
+                      },
+                    ),
+                    _MenuTile(
+                      icon: Icons.album_rounded,
+                      title: 'Spotify',
+                      subtitle: spotifyConfiguredSignal.value
+                          ? 'Подключено'
+                          : 'Требуется подключение в настройках',
+                      trailing: provider == MusicProvider.spotify
+                          ? Icon(
+                              Icons.check_circle_rounded,
+                              color: const Color(0xFF1DB954),
+                              size: 22,
+                            )
+                          : null,
+                      onTap: () {
+                        SpotifyController.setProvider(MusicProvider.spotify);
+                        if (!spotifyConfiguredSignal.value) {
+                          Navigator.pop(context);
+                          setSection(AppSection.account);
+                        }
+                      },
+                    ),
+                  ],
+                );
+              },
+            ),
+
+            Divider(color: cs.onSurface.withValues(alpha: 0.1), height: 40),
+
             _MenuTile(
               icon: Icons.badge_outlined,
               title: 'Управление аккаунтом',
@@ -469,11 +524,6 @@ class _AccountMenuDialog extends StatelessWidget {
               },
             ),
 
-            Divider(
-              color: cs.onSurface.withValues(alpha: 0.1),
-              height: 40,
-            ),
-
             _MenuTile(
               icon: Icons.logout_rounded,
               title: 'Выйти из аккаунта',
@@ -492,11 +542,15 @@ class _AccountMenuDialog extends StatelessWidget {
 class _MenuTile extends StatelessWidget {
   final IconData icon;
   final String title;
+  final String? subtitle;
+  final Widget? trailing;
   final VoidCallback? onTap;
 
   const _MenuTile({
     required this.icon,
     required this.title,
+    this.subtitle,
+    this.trailing,
     this.onTap,
   });
 
@@ -517,11 +571,28 @@ class _MenuTile extends StatelessWidget {
             Icon(icon, color: cs.onSurface, size: 24),
             const SizedBox(width: 16),
             Expanded(
-              child: Text(
-                title,
-                style: TextStyle(fontSize: 15, color: cs.onSurface),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(fontSize: 15, color: cs.onSurface),
+                  ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
+            if (trailing != null) ...[trailing!, const SizedBox(width: 4)],
           ],
         ),
       ),
@@ -571,11 +642,9 @@ class _WaveOverlayState extends State<_WaveOverlay>
       child: CompositedTransformFollower(
         link: widget.layerLink,
         showWhenUnlinked: false,
-        targetAnchor: isNarrow ? Alignment.topCenter : Alignment.centerRight,
-        followerAnchor: isNarrow
-            ? Alignment.bottomCenter
-            : Alignment.centerLeft,
-        offset: isNarrow ? const Offset(0, -24) : const Offset(32, 0),
+        targetAnchor: Alignment.bottomCenter,
+        followerAnchor: Alignment.topCenter,
+        offset: const Offset(0, 32),
         child: MouseRegion(
           onEnter: (_) => widget.onHover(isHovered: true),
           onExit: (_) => widget.onHover(isHovered: false),
@@ -589,9 +658,8 @@ class _WaveOverlayState extends State<_WaveOverlay>
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(AppRadius.xxl),
                   side: BorderSide(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withValues(alpha: 0.1),
+                    color: Theme.of(context).colorScheme.onSurface
+                        .withValues(alpha: 0.1),
                   ),
                 ),
                 child: WaveSettingsPanel(onSelected: widget.onSelected),
@@ -640,9 +708,7 @@ class _NavIcon extends StatelessWidget {
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(isSelected ? 16 : 14),
             border: isSelected
-                ? Border.all(
-                    color: scheme.primary.withValues(alpha: 0.35),
-                  )
+                ? Border.all(color: scheme.primary.withValues(alpha: 0.35))
                 : null,
           ),
           child: IconButton(

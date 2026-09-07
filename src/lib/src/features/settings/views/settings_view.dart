@@ -10,6 +10,7 @@ import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/responsive.dart';
 import 'package:yayma/src/features/library/providers/library_provider.dart';
+import 'package:yayma/src/features/spotify/providers/spotify_provider.dart';
 import 'package:yayma/src/features/settings/views/lyrics_providers_dialog.dart';
 import 'package:yayma/src/rust/api/content.dart' as rust;
 import 'package:yayma/src/rust/api/simple.dart' as simple;
@@ -128,10 +129,7 @@ class _SettingsViewState extends State<SettingsView> {
   }
 
   Future<void> _saveVibeRenderScale(double scale) async {
-    final normalized = scale.clamp(
-      minVibeRenderScale,
-      maxVibeRenderScale,
-    );
+    final normalized = scale.clamp(minVibeRenderScale, maxVibeRenderScale);
     vibeRenderScaleSignal.value = normalized;
     final ctx = appContextSignal.value;
     if (ctx != null) {
@@ -145,6 +143,107 @@ class _SettingsViewState extends State<SettingsView> {
     if (ctx != null) {
       await simple.setBlurEffectsEnabled(ctx: ctx, enabled: enabled);
     }
+  }
+
+  Future<void> _showSpotifyDialog() async {
+    final idController = TextEditingController();
+    final secretController = TextEditingController();
+    final tokenController = TextEditingController();
+    final seedController = TextEditingController(
+      text: spotifyWaveSeedArtistSignal.value,
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1E),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.xl),
+          side: BorderSide(
+            color: Theme.of(context).colorScheme.onSurface
+                .withValues(alpha: 0.1),
+          ),
+        ),
+        title: const Text('Подключение Spotify'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Создайте приложение на developer.spotify.com/dashboard и '
+                'вставьте Client ID и Client Secret. Чтобы лайки появлялись '
+                'в библиотеке Spotify, вставьте OAuth-токен со скоупом '
+                'user-library-modify (необязательно).',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: idController,
+                decoration: const InputDecoration(
+                  labelText: 'Client ID',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: secretController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Client Secret',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: tokenController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'OAuth токен (необязательно)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: seedController,
+                decoration: const InputDecoration(
+                  labelText: 'Артист для Моей волны (например, Face)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () {
+              unawaited(
+                SpotifyController.saveCredentials(
+                  clientId: idController.text,
+                  clientSecret: secretController.text,
+                  userToken: tokenController.text,
+                  seedArtist: seedController.text,
+                ),
+              );
+              Navigator.pop(dialogContext);
+              showAppSuccess('Настройки Spotify сохранены');
+            },
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    idController.dispose();
+    secretController.dispose();
+    tokenController.dispose();
+    seedController.dispose();
   }
 
   Future<void> _pickPath() async {
@@ -239,6 +338,36 @@ class _SettingsViewState extends State<SettingsView> {
                     },
                   ),
                   const SizedBox(height: 32),
+                  const _SectionTitle(title: 'Spotify'),
+                  const SizedBox(height: 20),
+                  SignalBuilder(
+                    builder: (context) {
+                      final configured = spotifyConfiguredSignal.value;
+                      final userConnected = spotifyUserConnectedSignal.value;
+                      final seedArtist = spotifyWaveSeedArtistSignal.value;
+                      final status = !configured
+                          ? 'Не подключено'
+                          : userConnected
+                          ? 'Подключено (библиотека синхронизируется)'
+                          : 'Подключено (без библиотеки)';
+                      return _SettingItem(
+                        title: 'Подключение Spotify',
+                        subtitle: '$status · артист волны: $seedArtist',
+                        icon: Icons.graphic_eq_rounded,
+                        onTap: () => unawaited(_showSpotifyDialog()),
+                        trailing: Icon(
+                          configured
+                              ? Icons.check_circle_rounded
+                              : Icons.error_outline_rounded,
+                          color: configured
+                              ? const Color(0xFF1DB954)
+                              : cs.onSurfaceVariant,
+                          size: 22,
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 32),
                   const _SectionTitle(title: 'Визуальные эффекты'),
                   const SizedBox(height: 20),
                   SignalBuilder(
@@ -248,14 +377,11 @@ class _SettingsViewState extends State<SettingsView> {
                         title: 'Показывать волну',
                         subtitle: 'Динамический фон, реагирующий на музыку',
                         icon: Icons.waves_rounded,
-                        onTap: () => unawaited(
-                          _toggleVibeVisibility(!enabled),
-                        ),
+                        onTap: () => unawaited(_toggleVibeVisibility(!enabled)),
                         trailing: Switch(
                           value: enabled,
-                          onChanged: (value) => unawaited(
-                            _toggleVibeVisibility(value),
-                          ),
+                          onChanged: (value) =>
+                              unawaited(_toggleVibeVisibility(value)),
                         ),
                       );
                     },
@@ -283,9 +409,8 @@ class _SettingsViewState extends State<SettingsView> {
                                     vibeRenderScaleSignal.value = value;
                                   }
                                 : null,
-                            onChangeEnd: (value) => unawaited(
-                              _saveVibeRenderScale(value),
-                            ),
+                            onChangeEnd: (value) =>
+                                unawaited(_saveVibeRenderScale(value)),
                           ),
                         ),
                       );
@@ -299,14 +424,11 @@ class _SettingsViewState extends State<SettingsView> {
                         title: 'Размытие интерфейса',
                         subtitle: 'Размывать фон под панелями управления',
                         icon: Icons.blur_on_rounded,
-                        onTap: () => unawaited(
-                          _toggleBlurEffects(!enabled),
-                        ),
+                        onTap: () => unawaited(_toggleBlurEffects(!enabled)),
                         trailing: Switch(
                           value: enabled,
-                          onChanged: (value) => unawaited(
-                            _toggleBlurEffects(value),
-                          ),
+                          onChanged: (value) =>
+                              unawaited(_toggleBlurEffects(value)),
                         ),
                       );
                     },
@@ -339,8 +461,7 @@ class _SettingsViewState extends State<SettingsView> {
                         final enabled = _autoHideNavbarSignal.value;
                         return _SettingItem(
                           title: 'Скрывать боковую панель',
-                          subtitle:
-                              'Автоматически скрывать навигацию на главном экране',
+                          subtitle: 'Автоматически скрывать навигацию на главном экране',
                           icon: Icons.vertical_split_rounded,
                           onTap: () => unawaited(
                             _toggleAutoHideNavbar(!(enabled.value ?? false)),
@@ -385,8 +506,7 @@ class _SettingsViewState extends State<SettingsView> {
                         final enabled = _closeToTraySignal.value;
                         return _SettingItem(
                           title: 'Сворачивать в трей при закрытии',
-                          subtitle:
-                              'При нажатии на крестик приложение будет скрыто в трей',
+                          subtitle: 'При нажатии на крестик приложение будет скрыто в трей',
                           icon: Icons.window_rounded,
                           onTap: () => unawaited(
                             _toggleCloseToTray(!(enabled.value ?? true)),
@@ -404,8 +524,7 @@ class _SettingsViewState extends State<SettingsView> {
                   const SizedBox(height: 20),
                   _SettingItem(
                     title: 'Источники текста песен',
-                    subtitle:
-                        'Включённые источники для поиска синхронного текста, если у ',
+                    subtitle: 'Включённые источники для поиска синхронного текста, если у ',
                     icon: Icons.lyrics_rounded,
                     onTap: () => LyricsProvidersDialog.show(context),
                   ),
@@ -488,8 +607,7 @@ class _SettingsViewState extends State<SettingsView> {
                       final enabled = _updateCheckSignal.value;
                       return _SettingItem(
                         title: 'Проверка обновлений при запуске',
-                        subtitle:
-                            'Проверять наличие новых версий на GitHub при запуске',
+                        subtitle: 'Проверять наличие новых версий на GitHub при запуске',
                         icon: Icons.system_update_rounded,
                         onTap: () => unawaited(
                           _toggleUpdateCheck(!(enabled.value ?? true)),
