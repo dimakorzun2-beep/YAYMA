@@ -525,6 +525,12 @@ impl AudioController {
             self.signals.update_progress(0, self.signals.duration_ms.get());
         } else {
             self.progress_clock.set_current_position(pos);
+            // Emit immediately so the UI reflects the new position even while
+            // paused (the monitor loop only publishes progress during playback).
+            self.signals.update_progress(
+                pos.as_millis() as u64,
+                self.signals.duration_ms.get(),
+            );
         }
     }
 

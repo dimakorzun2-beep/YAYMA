@@ -581,9 +581,22 @@ class PlaybackController {
   static Future<void> changeTransientVolumeGain(int gain) => runRustAction(
     (ctx) => rust.setTransientVolumeGain(ctx: ctx, gain: gain),
   );
-  static Future<void> seekTo(Duration duration) => runRustAction(
-    (ctx) => rust.seek(ctx: ctx, positionMs: duration.inMilliseconds),
-  );
+  static Future<void> seekTo(Duration duration) {
+    // Optimistic update so the timeline stays at the new position even while
+    // paused (progress events only tick during playback, and the seek echo
+    // from Rust may take a moment to arrive).
+    final current = playerProgressSignal.peek();
+    if (current != null) {
+      final pos = duration.inMilliseconds.clamp(0, current.durationMs);
+      playerProgressSignal.value = PlaybackProgressDto(
+        positionMs: pos,
+        durationMs: current.durationMs,
+      );
+    }
+    return runRustAction(
+      (ctx) => rust.seek(ctx: ctx, positionMs: duration.inMilliseconds),
+    );
+  }
 
   static Future<void> setQuality(AudioQuality quality) =>
       runRustAction((ctx) async {

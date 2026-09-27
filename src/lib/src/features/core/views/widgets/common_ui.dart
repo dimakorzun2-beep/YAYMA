@@ -447,12 +447,51 @@ class CommonProgressSlider extends StatefulWidget {
 
 class _CommonProgressSliderState extends State<CommonProgressSlider> {
   double? _dragValue;
-  Timer? _dragEndTimer;
+  String? _dragTrackId;
+  Timer? _confirmTimer;
 
   @override
   void dispose() {
-    _dragEndTimer?.cancel();
+    _confirmTimer?.cancel();
     super.dispose();
+  }
+
+  void _clearDrag() {
+    _confirmTimer?.cancel();
+    _confirmTimer = null;
+    if (mounted && _dragValue != null) {
+      setState(() {
+        _dragValue = null;
+        _dragTrackId = null;
+      });
+    }
+  }
+
+  void _onDragStart(double val) {
+    _confirmTimer?.cancel();
+    setState(() {
+      _dragValue = val;
+      _dragTrackId = currentTrackIdSignal.peek();
+    });
+  }
+
+  void _onDragUpdate(double val) {
+    setState(() => _dragValue = val);
+  }
+
+  void _onDragEnd(double val) {
+    setState(() {
+      _dragValue = val;
+      _dragTrackId = currentTrackIdSignal.peek();
+    });
+    // Fallback: don't stick forever if the seek echo never arrives
+    // (e.g. seek failed). The drag is normally cleared earlier once
+    // playerProgressSignal confirms the new position.
+    _confirmTimer?.cancel();
+    _confirmTimer = Timer(const Duration(seconds: 2), _clearDrag);
+    unawaited(
+      PlaybackController.seekTo(Duration(milliseconds: val.toInt())),
+    );
   }
 
   @override
@@ -462,6 +501,17 @@ class _CommonProgressSliderState extends State<CommonProgressSlider> {
       child: SignalBuilder(
         builder: (context) {
           final progress = trackProgressSignal();
+          final trackId = currentTrackIdSignal();
+          // Seek confirmed: backend echoed the new position (or track changed)
+          // — drop the held drag value so the live signal takes over.
+          if (_dragValue != null) {
+            final confirmed =
+                trackId != _dragTrackId ||
+                (progress.positionMs - _dragValue!).abs() < 1000;
+            if (confirmed) {
+              WidgetsBinding.instance.addPostFrameCallback((_) => _clearDrag());
+            }
+          }
           final dur = progress.durationMs;
           final displayPosition = _dragValue ?? progress.positionMs;
           final trackHeight = widget.compact ? 4.0 : 6.0;
@@ -507,29 +557,9 @@ class _CommonProgressSliderState extends State<CommonProgressSlider> {
                                 context,
                               ).colorScheme.onSurface.withValues(alpha: 0.15),
                             ),
-                            onChangeStart: (val) {
-                              setState(() => _dragValue = val);
-                            },
-                            onChanged: (val) {
-                              setState(() => _dragValue = val);
-                            },
-                            onChangeEnd: (val) {
-                              setState(() => _dragValue = val);
-                              _dragEndTimer?.cancel();
-                              _dragEndTimer = Timer(
-                                const Duration(milliseconds: 500),
-                                () {
-                                  if (mounted) {
-                                    setState(() => _dragValue = null);
-                                  }
-                                },
-                              );
-                              unawaited(
-                                PlaybackController.seekTo(
-                                  Duration(milliseconds: val.toInt()),
-                                ),
-                              );
-                            },
+                            onChangeStart: _onDragStart,
+                            onChanged: _onDragUpdate,
+                            onChangeEnd: _onDragEnd,
                           ),
                         ),
                       ),
@@ -563,29 +593,9 @@ class _CommonProgressSliderState extends State<CommonProgressSlider> {
                           context,
                         ).colorScheme.onSurface.withValues(alpha: 0.15),
                       ),
-                      onChangeStart: (val) {
-                        setState(() => _dragValue = val);
-                      },
-                      onChanged: (val) {
-                        setState(() => _dragValue = val);
-                      },
-                      onChangeEnd: (val) {
-                        setState(() => _dragValue = val);
-                        _dragEndTimer?.cancel();
-                        _dragEndTimer = Timer(
-                          const Duration(milliseconds: 500),
-                          () {
-                            if (mounted) {
-                              setState(() => _dragValue = null);
-                            }
-                          },
-                        );
-                        unawaited(
-                          PlaybackController.seekTo(
-                            Duration(milliseconds: val.toInt()),
-                          ),
-                        );
-                      },
+                      onChangeStart: _onDragStart,
+                      onChanged: _onDragUpdate,
+                      onChangeEnd: _onDragEnd,
                     ),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
