@@ -35,27 +35,39 @@ class LyricsResult {
   LyricsResult(this.items, this.providerName);
 }
 
+const int _maxLyricsCacheSize = 20;
+
 final Map<String, FutureSignal<LyricsResult>> _lyricsCache = {};
 
 /// Drops every cached lyrics fetch so the next [lyricsSignal] read refetches
 /// from Rust. Call this when the set of enabled lyrics providers changes —
 /// otherwise a track's lyrics stay pinned to whatever source answered
 /// before the toggle, even after a source is disabled.
+/// Also call from logout to avoid leaking per-user data.
 void clearLyricsCache() {
   _lyricsCache.clear();
 }
 
 FutureSignal<LyricsResult> lyricsSignal(String trackId) {
-  return _lyricsCache.putIfAbsent(
-    trackId,
-    () => futureSignal<LyricsResult>(() async {
-      final result = await runRustFetch(
-        (ctx) => getLyrics(ctx: ctx, trackId: trackId),
-      );
-      if (result == null) return LyricsResult([], '');
-      return LyricsResult(_toLyricItems(result.lines), result.providerName);
-    }),
-  );
+  final existing = _lyricsCache[trackId];
+  if (existing != null) {
+    // LRU promote: move to end so eviction drops the least-recently-used.
+    _lyricsCache.remove(trackId);
+    _lyricsCache[trackId] = existing;
+    return existing;
+  }
+  if (_lyricsCache.length >= _maxLyricsCacheSize) {
+    _lyricsCache.remove(_lyricsCache.keys.first);
+  }
+  final created = futureSignal<LyricsResult>(() async {
+    final result = await runRustFetch(
+      (ctx) => getLyrics(ctx: ctx, trackId: trackId),
+    );
+    if (result == null) return LyricsResult([], '');
+    return LyricsResult(_toLyricItems(result.lines), result.providerName);
+  });
+  _lyricsCache[trackId] = created;
+  return created;
 }
 
 List<LyricItem> _toLyricItems(List<LyricsLineDto> lines) {

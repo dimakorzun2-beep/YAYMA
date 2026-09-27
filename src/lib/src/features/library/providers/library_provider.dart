@@ -35,6 +35,23 @@ Future<void> initLibrary() async {
   // Liked tracks are loaded on demand when the library screen is opened
 }
 
+Future<void> disposeLibrary() async {
+  _librarySearchDebounce?.cancel();
+  _librarySearchDebounce = null;
+  final sub = _likedSub;
+  _likedSub = null;
+  await sub?.cancel();
+  likedTracksSignal.value = [];
+  playlistsSignal.value = [];
+  likedAlbumsSignal.value = [];
+  likedArtistsSignal.value = [];
+  isLibraryLoadingSignal.value = false;
+  librarySearchQuerySignal.value = '';
+  downloadedTracksSignal.value = {};
+  downloadingTracksSignal.value = {};
+  isDownloadingAllLikedTracksSignal.value = false;
+}
+
 Future<void> refreshDownloadedTracks() async {
   final ids = await runRustFetch((ctx) => getDownloadedTrackIds(ctx: ctx));
   if (ids != null) {

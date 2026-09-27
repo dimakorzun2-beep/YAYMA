@@ -21,9 +21,19 @@ final FutureSignal<SearchResultsDto?> searchResultsSignal =
 
 Timer? _searchDebounce;
 
-void setSearchQuery(String query) {
+void cancelSearchDebounce() {
   _searchDebounce?.cancel();
+  _searchDebounce = null;
+}
+
+void setSearchQuery(String query) {
+  cancelSearchDebounce();
   _searchDebounce = Timer(const Duration(milliseconds: 300), () {
     searchQuerySignal.value = query;
   });
+}
+
+Future<void> disposeSearch() async {
+  cancelSearchDebounce();
+  searchQuerySignal.value = '';
 }

@@ -210,6 +210,9 @@ class _Tracker with WindowListener {
   }
 
   Future<void> saveNow() async {
+    // Drop any pending debounced save: this is the save.
+    _debounce?.cancel();
+    _debounce = null;
     try {
       if (await windowManager.isMinimized() ||
           await windowManager.isFullScreen()) {

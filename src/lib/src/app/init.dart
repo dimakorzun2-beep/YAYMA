@@ -12,7 +12,9 @@ import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
 import 'package:yayma/src/features/library/providers/library_provider.dart';
 import 'package:yayma/src/features/playback/providers/audio_focus_manager.dart';
 import 'package:yayma/src/features/playback/providers/audio_handler.dart';
+import 'package:yayma/src/features/playback/providers/lyrics_provider.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
+import 'package:yayma/src/features/search/providers/search_provider.dart';
 import 'package:yayma/src/rust/api/auth.dart';
 import 'package:yayma/src/rust/api/simple.dart' as simple;
 import 'package:yayma/src/rust/app/context.dart';
@@ -174,6 +176,10 @@ class AppInit {
 
   static Future<void> logout() async {
     await PlaybackController.stop();
+    await disposePlayback();
+    await disposeLibrary();
+    clearLyricsCache();
+    await disposeSearch();
     await clearToken();
     accountSignal.value = null;
     appContextSignal.value = null;

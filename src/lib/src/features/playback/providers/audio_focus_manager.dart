@@ -29,13 +29,7 @@ class AudioFocusManager {
   static const _duckFadeSteps = 10;
 
   static Future<void> initialize(AudioSession session) async {
-    await _interruptionSub?.cancel();
-    await _becomingNoisySub?.cancel();
-    _resumeAfterTransient = false;
-    _transientPauseActive = false;
-    _ducked = false;
-    _sessionActive = false;
-    _transientGain = 100;
+    await dispose();
     await PlaybackController.changeTransientVolumeGain(100);
 
     _interruptionSub = session.interruptionEventStream.listen(
@@ -69,6 +63,26 @@ class AudioFocusManager {
         (_) => _syncSessionActive(session, isPlaying),
       );
     });
+  }
+
+  /// Explicit teardown for app shutdown: cancels interruption/noisy
+  /// subscriptions and the session-sync effect, then resets in-memory state
+  /// so a later [initialize] starts clean. Idempotent; makes no Rust calls
+  /// so it is safe to invoke after logout when there is no app context.
+  static Future<void> dispose() async {
+    await _interruptionSub?.cancel();
+    _interruptionSub = null;
+    await _becomingNoisySub?.cancel();
+    _becomingNoisySub = null;
+    _disposeSessionActiveEffect?.call();
+    _disposeSessionActiveEffect = null;
+    _interruptionQueue = Future.value();
+    _sessionQueue = Future.value();
+    _resumeAfterTransient = false;
+    _transientPauseActive = false;
+    _ducked = false;
+    _sessionActive = false;
+    _transientGain = 100;
   }
 
   static Future<void> _handleInterruption(

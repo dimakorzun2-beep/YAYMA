@@ -406,6 +406,14 @@ class _YandexLoginDialogState extends State<YandexLoginDialog> {
     );
   }
 
+  @override
+  void dispose() {
+    // WebViewController has no dispose in webview_all; flag pending
+    // navigation callbacks so they no-op after the dialog is gone.
+    _isFinalized = true;
+    super.dispose();
+  }
+
   Future<NavigationDecision> _parseToken(String urlString) async {
     if (_isFinalized) return NavigationDecision.navigate;
 

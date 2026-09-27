@@ -33,11 +33,61 @@ final FlutterSignal<AudioQuality> audioQualitySignal = signal<AudioQuality>(
 
 StreamSubscription<rust.AppEvent>? _eventSub;
 
-Future<void> initPlayback() async {
+/// Deduplicates concurrent [initPlayback] calls (login + auto-login racing).
+Future<void>? _initPlaybackFuture;
+
+Future<void> initPlayback() {
+  final ongoing = _initPlaybackFuture;
+  if (ongoing != null) return ongoing;
+  final future = _initPlaybackUnsafe();
+  _initPlaybackFuture = future;
+  unawaited(
+    future.then((_) {
+      if (identical(_initPlaybackFuture, future)) _initPlaybackFuture = null;
+    }, onError: (_) {
+      if (identical(_initPlaybackFuture, future)) _initPlaybackFuture = null;
+    }),
+  );
+  return future;
+}
+
+/// Explicit teardown for logout/app shutdown: cancels the Rust event stream
+/// and resets playback-owned signals to their initial values so a later
+/// [initPlayback] starts clean. Idempotent.
+Future<void> disposePlayback() async {
+  _initPlaybackFuture = null;
+  await _eventSub?.cancel();
+  _eventSub = null;
+
+  _bufferingDelayTimer?.cancel();
+  _bufferingDelayTimer = null;
+
+  playerStateSignal.value = null;
+  playerProgressSignal.value = null;
+  vibeTickSignal.value = F32Array26.init();
+  audioQualitySignal.value = AudioQuality.normal;
+  audioDevicesSignal.value = [];
+  selectedAudioDeviceSignal.value = null;
+  colorSchemeSignal.value = null;
+  showBufferingIndicatorSignal.value = false;
+  showLyricsSignal.value = false;
+  hideLyricsOverlaySignal.value = false;
+  lyricsSuppressDimSignal.value = false;
+  equalizerSignal.value = null;
+  audioEffectsSignal.value = [];
+
+  _preparedCoverSchemes.clear();
+  // In-flight preparations finish harmlessly; dropping the handles avoids
+  // holding stale futures across login sessions.
+  _preparingCoverSchemes.clear();
+}
+
+Future<void> _initPlaybackUnsafe() async {
   final ctx = appContextSignal.value;
   if (ctx == null) return;
 
   await _eventSub?.cancel();
+  _eventSub = null;
 
   // Initialize app event stream
   _eventSub = rust.appEventStream(ctx: ctx).listen((event) {

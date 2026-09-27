@@ -261,6 +261,9 @@ class _FloatingNavBarState extends State<FloatingNavBar>
   @override
   void dispose() {
     _showWaveTimer?.cancel();
+    _showWaveTimer = null;
+    _overlayEntry?.remove();
+    _overlayEntry = null;
     super.dispose();
   }
 }
