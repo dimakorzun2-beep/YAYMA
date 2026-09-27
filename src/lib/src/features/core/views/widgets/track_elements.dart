@@ -37,6 +37,9 @@ class TrackVersionWidget extends StatelessWidget {
           fontSize: fontSize,
           fontWeight: FontWeight.w400,
         ),
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
       ),
     );
   }

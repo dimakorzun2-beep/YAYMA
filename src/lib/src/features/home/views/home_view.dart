@@ -45,6 +45,8 @@ class HomeView extends StatelessWidget {
 
             final isNarrow = context.isNarrow;
 
+            final headerMaxWidth = (width - 48).clamp(320.0, 1400.0);
+
             return Stack(
               children: [
                 Positioned.fill(
@@ -75,6 +77,7 @@ class HomeView extends StatelessWidget {
                                       _HomeTrackHeader(
                                         small: height < 750,
                                         isNarrow: true,
+                                        maxWidth: width - 48,
                                       ),
                                       const SizedBox(
                                         height: 8,
@@ -104,7 +107,10 @@ class HomeView extends StatelessWidget {
                                       children: [
                                         const HomeCoverWidget(),
                                         SizedBox(height: verticalSpacing),
-                                        _HomeTrackHeader(small: height < 750),
+                                        _HomeTrackHeader(
+                                          small: height < 750,
+                                          maxWidth: headerMaxWidth,
+                                        ),
                                         SizedBox(height: trackHeaderSpacing),
                                         const SizedBox(
                                           width: 500,
@@ -202,7 +208,12 @@ class HomeView extends StatelessWidget {
 class _HomeTrackHeader extends StatefulWidget {
   final bool small;
   final bool isNarrow;
-  const _HomeTrackHeader({required this.small, this.isNarrow = false});
+  final double maxWidth;
+  const _HomeTrackHeader({
+    required this.small,
+    required this.maxWidth,
+    this.isNarrow = false,
+  });
 
   @override
   State<_HomeTrackHeader> createState() => _HomeTrackHeaderState();
@@ -228,66 +239,84 @@ class _HomeTrackHeaderState extends State<_HomeTrackHeader> {
               ? CrossAxisAlignment.start
               : CrossAxisAlignment.center,
           children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: widget.isNarrow
-                  ? MainAxisAlignment.start
-                  : MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                Flexible(
-                  child: MouseRegion(
-                    onEnter: (_) => _isTitleHovered.value = true,
-                    onExit: (_) => _isTitleHovered.value = false,
-                    cursor: meta.albumId != null
-                        ? SystemMouseCursors.click
-                        : SystemMouseCursors.basic,
-                    child: ValueListenableBuilder<bool>(
-                      valueListenable: _isTitleHovered,
-                      builder: (context, hovered, _) {
-                        return GestureDetector(
-                          onTap: () {
-                            if (meta.albumId != null) {
-                              navigateTo(AppSection.album, meta.albumId);
-                            }
-                          },
-                          child: Text(
-                            meta.title,
-                            style: TextStyle(
-                              fontSize: widget.small
-                                  ? (widget.isNarrow ? 18 : 32)
-                                  : (widget.isNarrow ? 22 : 42),
-                              fontWeight: FontWeight.w900,
-                              color: Theme.of(context).colorScheme.onSurface,
-                              letterSpacing: -1,
-                              height: 1.05,
-                              decoration: hovered && meta.albumId != null
-                                  ? TextDecoration.underline
-                                  : null,
-                              shadows: widget.isNarrow
-                                  ? null
-                                  : const [Shadow(blurRadius: 20)],
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: widget.maxWidth),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: widget.isNarrow
+                    ? MainAxisAlignment.start
+                    : MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Flexible(
+                    flex: 3,
+                    child: MouseRegion(
+                      onEnter: (_) => _isTitleHovered.value = true,
+                      onExit: (_) => _isTitleHovered.value = false,
+                      cursor: meta.albumId != null
+                          ? SystemMouseCursors.click
+                          : SystemMouseCursors.basic,
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: _isTitleHovered,
+                        builder: (context, hovered, _) {
+                          return GestureDetector(
+                            onTap: () {
+                              if (meta.albumId != null) {
+                                navigateTo(AppSection.album, meta.albumId);
+                              }
+                            },
+                            child: Tooltip(
+                              message: meta.title,
+                              waitDuration: const Duration(milliseconds: 500),
+                              child: Text(
+                                meta.title,
+                                style: TextStyle(
+                                  fontSize: widget.small
+                                      ? (widget.isNarrow ? 18 : 32)
+                                      : (widget.isNarrow ? 22 : 42),
+                                  fontWeight: FontWeight.w900,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface,
+                                  letterSpacing: -1,
+                                  height: 1.05,
+                                  decoration: hovered && meta.albumId != null
+                                      ? TextDecoration.underline
+                                      : null,
+                                  shadows: widget.isNarrow
+                                      ? null
+                                      : const [Shadow(blurRadius: 20)],
+                                ),
+                                maxLines: 1,
+                                softWrap: false,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
                   ),
-                ),
-                TrackVersionWidget(
-                  version: meta.version,
-                  fontSize: widget.small
-                      ? (widget.isNarrow ? 12 : 16)
-                      : (widget.isNarrow ? 14 : 20),
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withValues(alpha: 0.3),
-                  padding: const EdgeInsets.only(left: 12),
-                ),
-              ],
+                  if (meta.version != null)
+                    Flexible(
+                      child: Tooltip(
+                        message: meta.version,
+                        waitDuration: const Duration(milliseconds: 500),
+                        child: TrackVersionWidget(
+                          version: meta.version,
+                          fontSize: widget.small
+                              ? (widget.isNarrow ? 12 : 16)
+                              : (widget.isNarrow ? 14 : 20),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withValues(alpha: 0.3),
+                          padding: const EdgeInsets.only(left: 12),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
             const SizedBox(height: 8),
             ArtistNamesWidget(
@@ -396,9 +425,7 @@ class _HomeMainControls extends StatelessWidget {
                         size: 26,
                         onTap: trackId != null
                             ? () => unawaited(
-                                PlaybackController.toggleLike(
-                                  trackId: trackId,
-                                ),
+                                PlaybackController.toggleLike(trackId: trackId),
                               )
                             : null,
                       ),
@@ -436,11 +463,7 @@ class _HomeMainControls extends StatelessWidget {
                   Row(
                     children: [
                       IconButton(
-                        icon: Icon(
-                          repeatIcon,
-                          size: 24,
-                          color: repeatColor,
-                        ),
+                        icon: Icon(repeatIcon, size: 24, color: repeatColor),
                         onPressed: () =>
                             unawaited(PlaybackController.toggleRepeat()),
                       ),
@@ -554,11 +577,7 @@ class _HomeMainControls extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    Icons.volume_down,
-                    color: onSurfaceVariant,
-                    size: 18,
-                  ),
+                  Icon(Icons.volume_down, color: onSurfaceVariant, size: 18),
                   const SizedBox(width: 12),
                   CommonVolumeSlider(
                     width: small ? 180 : 240,
