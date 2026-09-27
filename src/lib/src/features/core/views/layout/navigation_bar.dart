@@ -90,6 +90,10 @@ class _FloatingNavBarState extends State<FloatingNavBar>
             _isHovered ||
             _isAccountMenuOpen;
         final isNarrow = MediaQuery.sizeOf(context).width < 600;
+        // Edge-to-edge: app draws behind the Android system navigation bar,
+        // so lift the floating navbar above the 3-button/gesture bar.
+        // viewPadding stays stable when the keyboard opens.
+        final systemBottom = MediaQuery.viewPaddingOf(context).bottom;
 
         const alpha = 0.5;
 
@@ -180,7 +184,11 @@ class _FloatingNavBarState extends State<FloatingNavBar>
           onExit: (_) => setState(() => _isNavbarHovered = false),
           child: Padding(
             padding: isNarrow
-                ? const EdgeInsets.only(bottom: 12, left: 24, right: 24)
+                ? EdgeInsets.only(
+                    bottom: 12 + systemBottom,
+                    left: 24,
+                    right: 24,
+                  )
                 : const EdgeInsets.only(
                     left: 16,
                     right: 48,

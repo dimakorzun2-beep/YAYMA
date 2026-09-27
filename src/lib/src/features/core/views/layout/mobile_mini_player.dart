@@ -143,8 +143,9 @@ class _MobileMiniPlayerState extends State<MobileMiniPlayer> {
 
         final meta = trackMetadataSignal();
 
-        // The app shell applies the Android system bottom inset via SafeArea.
-        // Keep only the visual gap here so the inset is not applied twice.
+        // Visual gap only: the Android system navigation inset is applied by
+        // the app shell (Positioned bottom offset in layout.dart), so it
+        // must not be added here a second time.
         const bottomPadding = 8.0;
 
         return Padding(

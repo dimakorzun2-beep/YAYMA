@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 import 'package:window_manager/window_manager.dart';
@@ -16,6 +18,19 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final isDesktop = Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+  if (!isDesktop) {
+    // Draw behind the Android system bars so the blurred cover background
+    // shows through the navigation area instead of an opaque black strip.
+    // The floating navbar itself is lifted above the buttons via viewPadding.
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarContrastEnforced: false,
+      ),
+    );
+  }
   final appInitialization = AppInit.initialize();
   final windowInitialization = isDesktop
       ? windowManager.ensureInitialized()

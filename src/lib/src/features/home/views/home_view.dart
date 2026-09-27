@@ -143,7 +143,9 @@ class HomeView extends StatelessWidget {
                             left: Platform.isAndroid ? 20 : 60,
                             right: Platform.isAndroid ? 20 : 60,
                             top: Platform.isAndroid ? 20 : 40,
-                            bottom: Platform.isAndroid ? 100 : 40,
+                            bottom:
+                                (Platform.isAndroid ? 100 : 40) +
+                                MediaQuery.viewPaddingOf(context).bottom,
                           ),
                           child: Stack(
                             children: [
