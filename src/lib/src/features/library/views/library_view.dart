@@ -7,10 +7,10 @@ import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/app_context_menu.dart';
+import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
 import 'package:yayma/src/features/core/views/widgets/common_ui.dart';
 import 'package:yayma/src/features/core/views/widgets/download_menu.dart';
 import 'package:yayma/src/features/core/views/widgets/media_card.dart';
-import 'package:yayma/src/features/core/views/widgets/track_elements.dart';
 import 'package:yayma/src/features/core/views/widgets/track_tile.dart';
 import 'package:yayma/src/features/library/providers/library_provider.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
@@ -459,7 +459,7 @@ class _LikedTracksTabState extends State<_LikedTracksTab> {
                           version: track.version,
                           artists: track.artists,
                           albumId: track.albumId,
-                          leading: TrackCover(url: track.coverUrl),
+                          leading: AppCover(coverUrl: track.coverUrl),
                           trailing: Text(
                             formatDuration(track.durationMs),
                             style: TextStyle(
@@ -829,8 +829,8 @@ class _PlaylistCardState extends State<_PlaylistCard> {
                         ),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(AppRadius.md),
-                          child: TrackCover(
-                            url: playlist.coverUrl,
+                          child: AppCover(
+                            coverUrl: playlist.coverUrl,
                             size: 200,
                             borderRadius: AppRadius.md,
                           ),

@@ -9,7 +9,8 @@ import 'package:signals_flutter/signals_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_all/webview_all.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/init.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/views/layout.dart';
 import 'package:yayma/src/features/settings/services/update_service.dart';
@@ -161,7 +162,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     if (token.isNotEmpty && !token.startsWith('http')) {
-      unawaited(login(token));
+      unawaited(AppInit.login(token));
     }
   }
 
@@ -453,7 +454,7 @@ class _YandexLoginDialogState extends State<YandexLoginDialog> {
   Future<void> _handleFoundToken(String token) async {
     if (_isFinalized) return;
     _isFinalized = true;
-    await login(token);
+    await AppInit.login(token);
 
     if (mounted) {
       Navigator.of(context).pop();
@@ -635,7 +636,7 @@ class _YandexDeviceLoginDialogState extends State<YandexDeviceLoginDialog> {
   Future<void> _handleFoundToken(String token) async {
     if (_isFinalized) return;
     _isFinalized = true;
-    await login(token);
+    await AppInit.login(token);
 
     if (mounted) {
       Navigator.of(context).pop();

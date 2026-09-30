@@ -1,7 +1,6 @@
-import 'dart:async';
-
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/session.dart';
+import 'package:yayma/src/features/core/services/debouncer.dart';
 import 'package:yayma/src/rust/api/content.dart';
 import 'package:yayma/src/rust/api/models.dart';
 
@@ -19,21 +18,19 @@ final FutureSignal<SearchResultsDto?> searchResultsSignal =
       return await search(ctx: ctx, query: query);
     });
 
-Timer? _searchDebounce;
+final Debouncer _searchDebouncer = Debouncer();
 
 void cancelSearchDebounce() {
-  _searchDebounce?.cancel();
-  _searchDebounce = null;
+  _searchDebouncer.cancel();
 }
 
 void setSearchQuery(String query) {
-  cancelSearchDebounce();
-  _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+  _searchDebouncer.run(() {
     searchQuerySignal.value = query;
-  });
+  }, const Duration(milliseconds: 300));
 }
 
 Future<void> disposeSearch() async {
-  cancelSearchDebounce();
+  _searchDebouncer.dispose();
   searchQuerySignal.value = '';
 }

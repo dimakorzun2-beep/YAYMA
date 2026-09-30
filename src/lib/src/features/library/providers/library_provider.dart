@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/session.dart';
+import 'package:yayma/src/features/core/services/debouncer.dart';
 import 'package:yayma/src/features/core/services/rust_bridge.dart';
-import 'package:yayma/src/features/playback/providers/playback_provider.dart';
 import 'package:yayma/src/rust/api/content.dart';
 import 'package:yayma/src/rust/api/library.dart';
 import 'package:yayma/src/rust/api/models.dart';
@@ -26,7 +26,7 @@ final FlutterSignal<Set<String>> downloadingTracksSignal = signal<Set<String>>(
 );
 
 StreamSubscription<List<SimpleTrackDto>>? _likedSub;
-Timer? _librarySearchDebounce;
+final Debouncer _librarySearchDebouncer = Debouncer();
 
 Future<void> initLibrary() async {
   // Load only playlists as they are lightweight and might be needed for navigation
@@ -36,8 +36,7 @@ Future<void> initLibrary() async {
 }
 
 Future<void> disposeLibrary() async {
-  _librarySearchDebounce?.cancel();
-  _librarySearchDebounce = null;
+  _librarySearchDebouncer.dispose();
   final sub = _likedSub;
   _likedSub = null;
   await sub?.cancel();
@@ -234,7 +233,7 @@ void setLibrarySearchQuery(String query) {
   final trimmedQuery = query.trim();
   librarySearchQuerySignal.value = trimmedQuery;
 
-  _librarySearchDebounce?.cancel();
+  _librarySearchDebouncer.cancel();
 
   if (trimmedQuery.isEmpty) {
     // Immediately reset search and request the full list
@@ -242,20 +241,12 @@ void setLibrarySearchQuery(String query) {
     return;
   }
 
-  _librarySearchDebounce = Timer(const Duration(milliseconds: 300), () {
+  _librarySearchDebouncer.run(() {
     // Check if the query changed while waiting
     if (librarySearchQuerySignal.value == trimmedQuery) {
       unawaited(refreshLikedTracks(query: trimmedQuery, force: true));
     }
-  });
-}
-
-Future<void> playTrackById(String trackId) async {
-  await PlaybackController.playTrack(trackId);
-}
-
-Future<void> playLikedTrackById(String trackId) async {
-  await PlaybackController.playLikedTrack(trackId);
+  }, const Duration(milliseconds: 300));
 }
 
 Future<bool> addTrackToPlaylistAction(

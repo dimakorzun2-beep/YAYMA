@@ -4,7 +4,8 @@ import 'dart:ui' as ui;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/init.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/auth/views/yandex_id_view.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
@@ -489,7 +490,7 @@ class _AccountMenuDialog extends StatelessWidget {
               icon: Icons.logout_rounded,
               title: 'Выйти из аккаунта',
               onTap: () {
-                unawaited(logout());
+                unawaited(AppInit.logout());
                 Navigator.pop(context);
               },
             ),

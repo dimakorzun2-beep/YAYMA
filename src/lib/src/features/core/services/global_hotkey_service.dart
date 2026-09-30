@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/services/rust_bridge.dart';
 import 'package:yayma/src/rust/api/hotkeys.dart' as rust;
 import 'package:yayma/src/rust/api/models.dart' as rust;
@@ -103,10 +103,10 @@ class GlobalHotkeyService {
   static Future<void> initialize() async {
     if (!isSupported) return;
 
-    // AppInit запускает авторизацию в фоне (unawaited), поэтому к моменту
-    // вызова из main() контекст может быть ещё не готов. Раньше метод молча
-    // выходил с пустым состоянием — после рестарта настройки выглядели
-    // «несохранёнными». Ждём контекст, затем читаем настройки из Rust.
+    // AppInit starts auth in the background (unawaited), so by the time
+    // it is called from main() the context may not be ready yet. Previously
+    // the method silently exited with empty state — after a restart settings
+    // looked "unsaved". Wait for the context, then read settings from Rust.
     for (var i = 0; i < 300 && appContextSignal.value == null; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
@@ -114,8 +114,8 @@ class GlobalHotkeyService {
     await refresh();
   }
 
-  /// Перечитать настройки из Rust (вызывать при открытии экрана настроек,
-  /// чтобы подтянуть свежее состояние после рестарта).
+  /// Re-read settings from Rust (call when opening the settings screen,
+  /// to pick up fresh state after a restart).
   static Future<void> refresh() async {
     if (!isSupported) return;
     if (appContextSignal.value == null) return;

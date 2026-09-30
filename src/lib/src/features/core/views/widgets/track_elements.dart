@@ -1,12 +1,8 @@
-import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
-import 'package:yayma/src/features/core/views/widgets/fullscreen_cover.dart';
-import 'package:yayma/src/features/core/views/widgets/rust_cached_image.dart';
 import 'package:yayma/src/rust/api/models.dart';
 
 class TrackVersionWidget extends StatelessWidget {
@@ -188,101 +184,6 @@ class _SingleArtistNameState extends State<_SingleArtistName> {
   }
 }
 
-class TrackCover extends StatelessWidget {
-  final String? url;
-  final double size;
-  final double borderRadius;
-  final bool isCircle;
-  final bool canExpand;
-  final String? heroTag;
-  final Shapes? shape;
-
-  const TrackCover({
-    required this.url,
-    super.key,
-    this.size = 64,
-    this.borderRadius = 8,
-    this.isCircle = false,
-    this.canExpand = false,
-    this.heroTag,
-    this.shape,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
-    final targetPx = (size * pixelRatio).round();
-    final resolvedUrl = url != null ? resolveCoverUrl(url!, targetPx) : null;
-    final image = resolvedUrl != null
-        ? RustCachedImage(
-            imageUrl: resolvedUrl,
-            width: size,
-            height: size,
-            cacheWidth: targetPx,
-            cacheHeight: targetPx,
-            errorWidget: _CoverPlaceholder(isCircle: isCircle, size: size),
-          )
-        : _CoverPlaceholder(isCircle: isCircle, size: size);
-
-    final Widget content;
-    final placeholderColor = Theme.of(
-      context,
-    ).colorScheme.onSurface.withValues(alpha: 0.1);
-    if (shape != null && !isCircle) {
-      content = M3EContainer(
-        shape!,
-        width: size,
-        height: size,
-        color: placeholderColor,
-        child: image,
-      );
-    } else {
-      content = Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          color: placeholderColor,
-          borderRadius: isCircle ? null : BorderRadius.circular(borderRadius),
-          shape: isCircle ? BoxShape.circle : BoxShape.rectangle,
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(
-            isCircle ? size / 2 : borderRadius,
-          ),
-          child: image,
-        ),
-      );
-    }
-
-    var cover = content;
-
-    if (heroTag != null && url != null) {
-      cover = Hero(
-        tag: heroTag!,
-        child: cover,
-      );
-    }
-
-    if (canExpand && url != null) {
-      cover = MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: () => unawaited(
-            FullscreenCoverDialog.show(
-              context,
-              url!,
-              heroTag: heroTag ?? url!,
-            ),
-          ),
-          child: cover,
-        ),
-      );
-    }
-
-    return cover;
-  }
-}
-
 class TrackPlayingIndicator extends StatefulWidget {
   final bool isPlaying;
   final double height;
@@ -333,7 +234,7 @@ class _TrackPlayingIndicatorState extends State<TrackPlayingIndicator>
   Widget build(BuildContext context) {
     final color = widget.color ?? Theme.of(context).colorScheme.primary;
     if (!widget.isPlaying) {
-      // Пауза: статичные бары минимальной высоты, размер фиксирован.
+      // Paused: static bars at minimum height, fixed size.
       return SizedBox(
         height: widget.height,
         child: Row(
@@ -363,8 +264,8 @@ class _TrackPlayingIndicatorState extends State<TrackPlayingIndicator>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: List.generate(3, (i) {
-              // Плавная спокойная волна: малая амплитуда, синусоида,
-              // небольшой сдвиг фазы между полосами.
+              // Smooth calm wave: small amplitude, sine curve,
+              // slight phase offset between bars.
               final phase = _controller.value * 2 * math.pi + i * 1.4;
               final scale = 0.55 + 0.2 * math.sin(phase);
               return Container(
@@ -380,22 +281,6 @@ class _TrackPlayingIndicatorState extends State<TrackPlayingIndicator>
           );
         },
       ),
-    );
-  }
-}
-
-class _CoverPlaceholder extends StatelessWidget {
-  final bool isCircle;
-  final double size;
-
-  const _CoverPlaceholder({required this.isCircle, required this.size});
-
-  @override
-  Widget build(BuildContext context) {
-    return Icon(
-      isCircle ? Icons.person : Icons.music_note,
-      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.24),
-      size: size * 0.5,
     );
   }
 }

@@ -5,8 +5,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart'
-    show accountSignal, appContextSignal, authSignal;
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
 import 'package:yayma/src/features/library/providers/library_provider.dart';
@@ -19,10 +18,6 @@ import 'package:yayma/src/rust/api/auth.dart';
 import 'package:yayma/src/rust/api/simple.dart' as simple;
 import 'package:yayma/src/rust/app/context.dart';
 import 'package:yayma/src/rust/frb_generated.dart';
-
-// Export for backward compatibility
-export 'package:yayma/src/features/auth/providers/auth_provider.dart'
-    show initAuth, login, logout;
 
 /// Centralized application initialization module
 class AppInit {

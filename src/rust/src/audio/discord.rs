@@ -20,7 +20,7 @@ impl DiscordManager {
                 std::thread::sleep(Duration::from_millis(1000));
                 let rpc_enabled = signals.discord_rpc.get();
 
-                // Если выключили - рубим сразу
+                // If disabled - tear down immediately
                 if !rpc_enabled {
                     if let Some(mut c) = client.take() {
                         let _ = c.clear_activity();
@@ -32,7 +32,7 @@ impl DiscordManager {
                     continue;
                 }
 
-                // Если только что включили - сбрасываем таймер попытки для мгновенного коннекта
+                // If just enabled - reset the attempt timer for an instant connect
                 if rpc_enabled && !last_rpc_enabled {
                     last_connect_attempt = Instant::now() - RECONNECT_INTERVAL;
                 }
@@ -46,7 +46,7 @@ impl DiscordManager {
 
                 if track_changed || playing_changed {
                     if let Some(id) = track_id.as_ref() {
-                        // Пытаемся подключиться, если клиента нет и прошло достаточно времени
+                        // Try to connect if there is no client and enough time has passed
                         if client.is_none()
                             && Instant::now().duration_since(last_connect_attempt)
                                 >= RECONNECT_INTERVAL

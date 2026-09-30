@@ -4,7 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
@@ -543,7 +543,7 @@ class _GlobalHotkeysSettingsState extends State<_GlobalHotkeysSettings> {
   @override
   void initState() {
     super.initState();
-    // Подтянуть свежее состояние из Rust при каждом открытии настроек.
+    // Pull fresh state from Rust every time settings are opened.
     unawaited(GlobalHotkeyService.refresh());
   }
 

@@ -5,26 +5,10 @@ import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
-import 'package:yayma/src/features/core/views/widgets/rust_cached_image.dart';
+import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
+import 'package:yayma/src/features/core/views/widgets/hover_scale.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
 import 'package:yayma/src/rust/api/models.dart';
-
-class CoverErrorPlaceholder extends StatelessWidget {
-  const CoverErrorPlaceholder({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final onSurface = Theme.of(context).colorScheme.onSurface;
-    return ColoredBox(
-      color: onSurface.withValues(alpha: 0.1),
-      child: Icon(
-        Icons.music_note,
-        size: 120,
-        color: onSurface.withValues(alpha: 0.24),
-      ),
-    );
-  }
-}
 
 class HomeCoverWidget extends StatefulWidget {
   const HomeCoverWidget({super.key});
@@ -34,14 +18,6 @@ class HomeCoverWidget extends StatefulWidget {
 }
 
 class _HomeCoverWidgetState extends State<HomeCoverWidget> {
-  final ValueNotifier<bool> _isHovered = ValueNotifier(false);
-
-  @override
-  void dispose() {
-    _isHovered.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return SignalBuilder(
@@ -62,65 +38,48 @@ class _HomeCoverWidgetState extends State<HomeCoverWidget> {
           return _AndroidCarousel(size: size);
         }
 
-        return MouseRegion(
+        return HoverScale(
+          hoverScale: 1.035,
+          duration: const Duration(milliseconds: 400),
           cursor: meta.albumId != null
               ? SystemMouseCursors.click
               : SystemMouseCursors.basic,
-          onEnter: (_) => _isHovered.value = true,
-          onExit: (_) => _isHovered.value = false,
-          child: GestureDetector(
-            onTap: () {
-              if (meta.albumId != null) {
-                navigateTo(AppSection.album, meta.albumId);
-              }
-            },
-            child: ValueListenableBuilder<bool>(
-              valueListenable: _isHovered,
-              builder: (context, hovered, _) {
-                final springScale =
-                    (isPlaying ? 1.0 : 0.92) * (hovered ? 1.035 : 1.0);
-                return AnimatedScale(
-                  scale: springScale,
-                  duration: const Duration(milliseconds: 400),
-                  curve: Curves.easeOutBack,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 350),
-                    curve: Curves.easeInOutCubic,
-                    width: size,
-                    height: size,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(AppRadius.xxxl),
+          onTap: meta.albumId != null
+              ? () => navigateTo(AppSection.album, meta.albumId)
+              : null,
+          child: AnimatedScale(
+            scale: isPlaying ? 1.0 : 0.92,
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOutBack,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 350),
+              curve: Curves.easeInOutCubic,
+              width: size,
+              height: size,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(AppRadius.xxxl),
+              ),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 500),
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: ScaleTransition(
+                      scale: Tween<double>(
+                        begin: 0.9,
+                        end: 1,
+                      ).animate(animation),
+                      child: child,
                     ),
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 500),
-                      transitionBuilder: (child, animation) {
-                        return FadeTransition(
-                          opacity: animation,
-                          child: ScaleTransition(
-                            scale: Tween<double>(
-                              begin: 0.9,
-                              end: 1,
-                            ).animate(animation),
-                            child: child,
-                          ),
-                        );
-                      },
-                      child: ClipRRect(
-                        key: ValueKey(meta.coverUrl),
-                        borderRadius: BorderRadius.circular(AppRadius.xxxl),
-                        child: meta.coverUrl != null
-                            ? RustCachedImage(
-                                imageUrl: meta.coverUrl,
-                                width: size,
-                                height: size,
-                                errorWidget: const CoverErrorPlaceholder(),
-                              )
-                            : const CoverErrorPlaceholder(),
-                      ),
-                    ),
-                  ),
-                );
-              },
+                  );
+                },
+                child: AppCover(
+                  key: ValueKey(meta.coverUrl),
+                  coverUrl: meta.coverUrl,
+                  size: size,
+                  radius: AppRadius.xxxl,
+                ),
+              ),
             ),
           ),
         );
@@ -451,17 +410,11 @@ class _CarouselCard extends StatelessWidget {
             ),
           ],
         ),
-        child: ClipRRect(
+        child: AppCover(
           key: ValueKey(track.coverUrl),
-          borderRadius: BorderRadius.circular(size * (32 / 360)),
-          child: track.coverUrl != null
-              ? RustCachedImage(
-                  imageUrl: track.coverUrl,
-                  width: size,
-                  height: size,
-                  errorWidget: const CoverErrorPlaceholder(),
-                )
-              : const CoverErrorPlaceholder(),
+          coverUrl: track.coverUrl,
+          size: size,
+          radius: size * (32 / 360),
         ),
       ),
     );

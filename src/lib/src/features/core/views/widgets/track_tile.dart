@@ -5,11 +5,12 @@ import 'package:flutter/services.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/app_context_menu.dart';
+import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
 import 'package:yayma/src/features/core/views/widgets/download_menu.dart';
 import 'package:yayma/src/features/core/views/widgets/lyrics_view.dart';
 import 'package:yayma/src/features/core/views/widgets/responsive.dart';
@@ -72,14 +73,24 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
   }
 
   Widget _adjustLeading(Widget leading, bool isNarrow) {
-    if (isNarrow && leading is TrackCover && leading.size == 64) {
-      return TrackCover(
+    if (isNarrow && leading is AppCover && leading.size == 64) {
+      return AppCover(
+        key: leading.key,
+        coverUrl: leading.coverUrl ?? leading.url,
         url: leading.url,
+        localUri: leading.localUri,
         size: 48,
-        borderRadius: leading.borderRadius,
-        isCircle: leading.isCircle,
-        canExpand: leading.canExpand,
+        circle: leading.circle,
         heroTag: leading.heroTag,
+        onTap: leading.onTap,
+        borderRadius: leading.borderRadius,
+        radius: leading.radius,
+        shape: leading.shape,
+        canExpand: leading.canExpand,
+        hoverEnabled: leading.hoverEnabled,
+        hoverScale: leading.hoverScale,
+        fit: leading.fit,
+        placeholderIcon: leading.placeholderIcon,
       );
     }
     return leading;
@@ -526,8 +537,8 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
   }
 }
 
-/// Бейдж поверх leading (обычно обложки): виден только у текущего трека.
-/// При воспроизведении — анимированный эквалайзер, на паузе — статичный.
+/// Badge over leading (usually the cover): visible only on the current track.
+/// While playing — animated equalizer, while paused — static.
 class _LeadingPlayingBadge extends StatelessWidget {
   final String trackId;
   final Widget child;

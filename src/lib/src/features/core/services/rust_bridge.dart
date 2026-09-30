@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:yayma/src/app/init.dart' as app_init;
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/rust/app/context.dart';
 

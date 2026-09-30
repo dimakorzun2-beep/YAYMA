@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/app_context_menu.dart';
+import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
 import 'package:yayma/src/features/core/views/widgets/responsive.dart';
 import 'package:yayma/src/features/core/views/widgets/track_elements.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
@@ -207,11 +208,11 @@ class CommonDetailHeader extends StatelessWidget {
       child: isNarrow
           ? Column(
               children: [
-                TrackCover(
-                  url: coverUrl,
+                AppCover(
+                  coverUrl: coverUrl,
                   size: actualCoverSize,
                   borderRadius: 16,
-                  isCircle: isCircle,
+                  circle: isCircle,
                   canExpand: true,
                   heroTag: coverUrl,
                 ),
@@ -224,11 +225,11 @@ class CommonDetailHeader extends StatelessWidget {
                   ? CrossAxisAlignment.center
                   : CrossAxisAlignment.end,
               children: [
-                TrackCover(
-                  url: coverUrl,
+                AppCover(
+                  coverUrl: coverUrl,
                   size: actualCoverSize,
                   borderRadius: 16,
-                  isCircle: isCircle,
+                  circle: isCircle,
                   canExpand: true,
                   heroTag: coverUrl,
                 ),

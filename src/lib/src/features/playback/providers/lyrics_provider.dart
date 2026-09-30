@@ -1,5 +1,6 @@
 import 'package:signals_flutter/signals_flutter.dart';
 import 'package:yayma/src/features/core/services/rust_bridge.dart';
+import 'package:yayma/src/features/core/utils/lru_map.dart';
 import 'package:yayma/src/rust/api/content.dart';
 import 'package:yayma/src/rust/api/models.dart';
 
@@ -37,7 +38,11 @@ class LyricsResult {
 
 const int _maxLyricsCacheSize = 20;
 
-final Map<String, FutureSignal<LyricsResult>> _lyricsCache = {};
+/// Bounded LRU of per-track lyrics fetches. Reads promote entries and
+/// inserts past capacity evict the least-recently-used track (see [LruMap]).
+final LruMap<String, FutureSignal<LyricsResult>> _lyricsCache = LruMap(
+  maximumSize: _maxLyricsCacheSize,
+);
 
 /// Drops every cached lyrics fetch so the next [lyricsSignal] read refetches
 /// from Rust. Call this when the set of enabled lyrics providers changes —
@@ -50,15 +55,7 @@ void clearLyricsCache() {
 
 FutureSignal<LyricsResult> lyricsSignal(String trackId) {
   final existing = _lyricsCache[trackId];
-  if (existing != null) {
-    // LRU promote: move to end so eviction drops the least-recently-used.
-    _lyricsCache.remove(trackId);
-    _lyricsCache[trackId] = existing;
-    return existing;
-  }
-  if (_lyricsCache.length >= _maxLyricsCacheSize) {
-    _lyricsCache.remove(_lyricsCache.keys.first);
-  }
+  if (existing != null) return existing;
   final created = futureSignal<LyricsResult>(() async {
     final result = await runRustFetch(
       (ctx) => getLyrics(ctx: ctx, trackId: trackId),

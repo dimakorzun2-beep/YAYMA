@@ -5,10 +5,13 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/init.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
+import 'package:yayma/src/features/core/services/debouncer.dart';
 import 'package:yayma/src/features/core/services/rust_bridge.dart';
+import 'package:yayma/src/features/core/utils/lru_map.dart';
 import 'package:yayma/src/features/library/providers/library_provider.dart';
 import 'package:yayma/src/rust/api/audio_fx.dart' as rust;
 import 'package:yayma/src/rust/api/library.dart' as rust;
@@ -59,8 +62,7 @@ Future<void> disposePlayback() async {
   await _eventSub?.cancel();
   _eventSub = null;
 
-  _bufferingDelayTimer?.cancel();
-  _bufferingDelayTimer = null;
+  _bufferingDelayDebouncer.dispose();
 
   playerStateSignal.value = null;
   playerProgressSignal.value = null;
@@ -77,9 +79,8 @@ Future<void> disposePlayback() async {
   audioEffectsSignal.value = [];
 
   _preparedCoverSchemes.clear();
-  // In-flight preparations finish harmlessly; dropping the handles avoids
-  // holding stale futures across login sessions.
-  _preparingCoverSchemes.clear();
+  // In-flight preparations finish harmlessly; clearing drops the handles so
+  // stale futures are not held across login sessions.
 }
 
 Future<void> _initPlaybackUnsafe() async {
@@ -112,7 +113,7 @@ Future<void> _initPlaybackUnsafe() async {
             message.contains('Invalid token') ||
             message.contains('session expired') ||
             message.contains('401')) {
-          unawaited(logout());
+          unawaited(AppInit.logout());
         }
       case rust.AppEvent_TrackDownloadStarted(field0: final trackId):
         downloadingTracksSignal.value = {
@@ -353,78 +354,81 @@ final FlutterSignal<ColorScheme?> colorSchemeSignal = signal<ColorScheme?>(
 // Keep only the covers around the current queue position. Apart from avoiding
 // repeated palette extraction when going back, this lets the normal next-track
 // transition do its image work before the track actually changes.
+//
+// This second level next to Flutter's ImageCache is intentional: ImageCache
+// stores decoded images, not the derived ColorScheme palettes, and
+// ColorScheme.fromImageProvider is the expensive part worth memoizing.
+// In-flight extractions are deduplicated by caching the Future itself, so
+// concurrent readers share one palette computation (see [LruMap]).
 const int _preparedCoverCacheLimit = 6;
-final Map<String, ColorScheme> _preparedCoverSchemes = {};
-final Map<String, Future<ColorScheme?>> _preparingCoverSchemes = {};
-
-void _rememberCoverScheme(String url, ColorScheme scheme) {
-  _preparedCoverSchemes.remove(url);
-  _preparedCoverSchemes[url] = scheme;
-  while (_preparedCoverSchemes.length > _preparedCoverCacheLimit) {
-    _preparedCoverSchemes.remove(_preparedCoverSchemes.keys.first);
-  }
-}
+final LruMap<String, Future<ColorScheme?>> _preparedCoverSchemes = LruMap(
+  maximumSize: _preparedCoverCacheLimit,
+);
 
 Future<ColorScheme?> _prepareCoverScheme(String url) {
-  final ready = _preparedCoverSchemes[url];
-  if (ready != null) {
-    // Refresh its position in the small LRU cache.
-    _rememberCoverScheme(url, ready);
-    return Future.value(ready);
-  }
+  final cached = _preparedCoverSchemes[url];
+  if (cached != null) return cached;
 
-  final inFlight = _preparingCoverSchemes[url];
-  if (inFlight != null) return inFlight;
-
-  final future = () async {
-    try {
-      final ctx = appContextSignal.value;
-      if (ctx == null) return null;
-
-      final path = await rust.getCachedImagePath(ctx: ctx, url: url);
-      if (path == null) return null;
-
-      final file = File(path);
-      final paletteProvider = ResizeImage(
-        FileImage(file),
-        width: 32,
-        height: 32,
-      );
-      final scheme = await ColorScheme.fromImageProvider(
-        provider: paletteProvider,
-        brightness: Brightness.dark,
-      );
-      _rememberCoverScheme(url, scheme);
-
-      // Warm the exact decoded size used by BlurredCoverBackground. Resolving
-      // an ImageProvider is enough to put it into Flutter's shared image cache.
-      final backgroundProvider = ResizeImage(
-        FileImage(file),
-        width: 60,
-        height: 60,
-      );
-      final stream = backgroundProvider.resolve(ImageConfiguration.empty);
-      late final ImageStreamListener listener;
-      listener = ImageStreamListener(
-        (_, _) => stream.removeListener(listener),
-        onError: (_, _) => stream.removeListener(listener),
-      );
-      stream.addListener(listener);
-
-      return scheme;
-    } on Object catch (error) {
-      debugPrint('Cover preparation failed: $error');
-      return null;
-    }
-  }();
-
-  _preparingCoverSchemes[url] = future;
+  final future = _extractCoverScheme(url);
+  _preparedCoverSchemes[url] = future;
+  // Don't poison the cache with misses or errors: null results and failures
+  // are evicted so the next request retries instead of reusing the failure.
+  // The identity check guards against evicting a fresher entry inserted
+  // for the same url.
   unawaited(
-    future.then((_) {
-      unawaited(_preparingCoverSchemes.remove(url));
+    future.then((scheme) {
+      if (scheme == null &&
+          identical(_preparedCoverSchemes.peek(url), future)) {
+        final _ = _preparedCoverSchemes.remove(url);
+      }
+    }, onError: (_) {
+      if (identical(_preparedCoverSchemes.peek(url), future)) {
+        final _ = _preparedCoverSchemes.remove(url);
+      }
     }),
   );
   return future;
+}
+
+Future<ColorScheme?> _extractCoverScheme(String url) async {
+  try {
+    final ctx = appContextSignal.value;
+    if (ctx == null) return null;
+
+    final path = await rust.getCachedImagePath(ctx: ctx, url: url);
+    if (path == null) return null;
+
+    final file = File(path);
+    final paletteProvider = ResizeImage(
+      FileImage(file),
+      width: 32,
+      height: 32,
+    );
+    final scheme = await ColorScheme.fromImageProvider(
+      provider: paletteProvider,
+      brightness: Brightness.dark,
+    );
+
+    // Warm the exact decoded size used by BlurredCoverBackground. Resolving
+    // an ImageProvider is enough to put it into Flutter's shared image cache.
+    final backgroundProvider = ResizeImage(
+      FileImage(file),
+      width: 60,
+      height: 60,
+    );
+    final stream = backgroundProvider.resolve(ImageConfiguration.empty);
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener(
+      (_, _) => stream.removeListener(listener),
+      onError: (_, _) => stream.removeListener(listener),
+    );
+    stream.addListener(listener);
+
+    return scheme;
+  } on Object catch (error) {
+    debugPrint('Cover preparation failed: $error');
+    return null;
+  }
 }
 
 // Effect to update the scheme, normally from the already prepared queue entry.
@@ -433,13 +437,6 @@ final EffectCleanup _persistentColorSchemeEffect = effect(() {
 
   if (url == null || appContextSignal.value == null) {
     colorSchemeSignal.value = null;
-    return;
-  }
-
-  final ready = _preparedCoverSchemes[url];
-  if (ready != null) {
-    _rememberCoverScheme(url, ready);
-    colorSchemeSignal.value = ready;
     return;
   }
 
@@ -511,23 +508,21 @@ final EffectCleanup _vibePaletteEffect = effect(() {
 
 // Buffering indicator that only shows once the track has been stalled > 3s,
 // to avoid flickering on short buffering hiccups.
-Timer? _bufferingDelayTimer;
+final Debouncer _bufferingDelayDebouncer = Debouncer();
 final FlutterSignal<bool> showBufferingIndicatorSignal = signal(false);
 final EffectCleanup _bufferingDelayEffect = effect(() {
   final state = playerStateSignal();
   final stalled = state != null && !state.isPlaying && state.isBuffering;
 
   if (!stalled) {
-    _bufferingDelayTimer?.cancel();
-    _bufferingDelayTimer = null;
+    _bufferingDelayDebouncer.cancel();
     showBufferingIndicatorSignal.value = false;
     return;
   }
 
-  _bufferingDelayTimer ??= Timer(const Duration(seconds: 3), () {
-    _bufferingDelayTimer = null;
+  _bufferingDelayDebouncer.runOnce(() {
     showBufferingIndicatorSignal.value = true;
-  });
+  }, const Duration(seconds: 3));
 });
 
 // Windows taskbar thumbnail toolbar is handled natively in Rust
