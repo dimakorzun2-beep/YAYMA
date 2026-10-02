@@ -5,19 +5,20 @@ import 'package:flutter/services.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/app/session.dart';
+import 'package:yayma/src/features/auth/providers/auth_provider.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/app_context_menu.dart';
-import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
-import 'package:yayma/src/features/core/views/widgets/download_menu.dart';
+import 'package:yayma/src/features/core/views/widgets/common_ui.dart';
 import 'package:yayma/src/features/core/views/widgets/lyrics_view.dart';
 import 'package:yayma/src/features/core/views/widgets/responsive.dart';
 import 'package:yayma/src/features/core/views/widgets/track_details_dialog.dart';
 import 'package:yayma/src/features/core/views/widgets/track_elements.dart';
 import 'package:yayma/src/features/library/providers/library_provider.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
+import 'package:yayma/src/features/spotify/spotify_badge.dart';
+import 'package:yayma/src/features/spotify/spotify_service.dart';
 import 'package:yayma/src/rust/api/content.dart' as rust;
 import 'package:yayma/src/rust/api/models.dart';
 
@@ -58,6 +59,7 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
   final ValueNotifier<bool> _isPressed = ValueNotifier(false);
   final ValueNotifier<bool> _isTitleHovered = ValueNotifier(false);
   final ValueNotifier<bool> _isMenuOpen = ValueNotifier(false);
+  final GlobalKey _coverKey = GlobalKey();
 
   @override
   void dispose() {
@@ -69,66 +71,30 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
   }
 
   void _handleTap() {
+    if (widget.leading is TrackCover) {
+      final cover = widget.leading! as TrackCover;
+      flyCoverToPlayer(
+        context,
+        coverKey: _coverKey,
+        coverUrl: cover.url,
+        borderRadius: cover.isCircle ? cover.size / 2 : cover.borderRadius,
+      );
+    }
     widget.onTap?.call();
   }
 
   Widget _adjustLeading(Widget leading, bool isNarrow) {
-    if (isNarrow && leading is AppCover && leading.size == 64) {
-      return AppCover(
-        key: leading.key,
-        coverUrl: leading.coverUrl ?? leading.url,
+    if (isNarrow && leading is TrackCover && leading.size == 64) {
+      return TrackCover(
         url: leading.url,
-        localUri: leading.localUri,
         size: 48,
-        circle: leading.circle,
-        heroTag: leading.heroTag,
-        onTap: leading.onTap,
         borderRadius: leading.borderRadius,
-        radius: leading.radius,
-        shape: leading.shape,
+        isCircle: leading.isCircle,
         canExpand: leading.canExpand,
-        hoverEnabled: leading.hoverEnabled,
-        hoverScale: leading.hoverScale,
-        fit: leading.fit,
-        placeholderIcon: leading.placeholderIcon,
+        heroTag: leading.heroTag,
       );
     }
     return leading;
-  }
-
-  Future<void> _downloadTrack(DownloadMode mode) async {
-    final ctx = appContextSignal.value;
-    if (ctx == null) return;
-
-    showAppSuccess(
-      mode == DownloadMode.cache
-          ? 'Скачивание в кэш началось...'
-          : 'Скачивание в файл началось...',
-    );
-    downloadingTracksSignal.value = {
-      ...downloadingTracksSignal.value,
-      widget.trackId,
-    };
-
-    try {
-      final paths = await rust.downloadTracks(
-        ctx: ctx,
-        trackIds: [widget.trackId],
-        toCache: mode == DownloadMode.cache,
-      );
-      if (mode == DownloadMode.cache) {
-        showAppSuccess('Трек скачан');
-        unawaited(refreshDownloadedTracks());
-      } else {
-        final path = paths.isEmpty ? '' : paths.first;
-        showAppSuccess('Трек сохранен: $path');
-      }
-    } on Object catch (e) {
-      showAppError('Ошибка: $e');
-    } finally {
-      final newSet = {...downloadingTracksSignal.value}..remove(widget.trackId);
-      downloadingTracksSignal.value = newSet;
-    }
   }
 
   @override
@@ -216,8 +182,30 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
                       showAppSuccess(
                         'Ссылка скопирована',
                       );
-                    case 'download_cache':
-                      await _downloadTrack(DownloadMode.cache);
+                    case 'download':
+                      showAppSuccess('Скачивание началось...');
+                      final ctx = appContextSignal.value;
+                      if (ctx != null) {
+                        downloadingTracksSignal.value = {
+                          ...downloadingTracksSignal.value,
+                          widget.trackId,
+                        };
+                        try {
+                          await rust.downloadTrack(
+                            ctx: ctx,
+                            trackId: widget.trackId,
+                            toCache: true,
+                          );
+                          showAppSuccess('Трек скачан');
+                          unawaited(refreshDownloadedTracks());
+                        } on Object catch (e) {
+                          showAppError('Ошибка: $e');
+                        } finally {
+                          final newSet = {...downloadingTracksSignal.value}
+                            ..remove(widget.trackId);
+                          downloadingTracksSignal.value = newSet;
+                        }
+                      }
                     case 'delete_downloaded':
                       final ctx = appContextSignal.value;
                       if (ctx != null) {
@@ -232,8 +220,29 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
                           showAppError('Ошибка: $e');
                         }
                       }
-                    case 'download_files':
-                      await _downloadTrack(DownloadMode.files);
+                    case 'download_to_file':
+                      showAppSuccess('Скачивание в файл началось...');
+                      final ctx = appContextSignal.value;
+                      if (ctx != null) {
+                        downloadingTracksSignal.value = {
+                          ...downloadingTracksSignal.value,
+                          widget.trackId,
+                        };
+                        try {
+                          final path = await rust.downloadTrack(
+                            ctx: ctx,
+                            trackId: widget.trackId,
+                            toCache: false,
+                          );
+                          showAppSuccess('Трек сохранен: $path');
+                        } on Object catch (e) {
+                          showAppError('Ошибка: $e');
+                        } finally {
+                          final newSet = {...downloadingTracksSignal.value}
+                            ..remove(widget.trackId);
+                          downloadingTracksSignal.value = newSet;
+                        }
+                      }
                   }
                 },
                 items: [
@@ -276,28 +285,23 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
                     label: 'О треке',
                     icon: Icons.info_outline_rounded,
                   ),
-                  const AppContextMenuItem(
-                    label: 'Скачать',
-                    icon: Icons.download_rounded,
-                    subItems: [
-                      AppContextMenuItem(
-                        value: 'download_cache',
-                        label: 'В кэш приложения',
-                        icon: Icons.offline_bolt_rounded,
-                      ),
-                      AppContextMenuItem(
-                        value: 'download_files',
-                        label: 'В отдельный файл',
-                        icon: Icons.file_download_rounded,
-                      ),
-                    ],
-                  ),
                   if (downloadedTracksSignal.value.contains(widget.trackId))
                     const AppContextMenuItem(
                       value: 'delete_downloaded',
                       label: 'Удалить из загрузок',
                       icon: Icons.remove_circle_outline_rounded,
+                    )
+                  else
+                    const AppContextMenuItem(
+                      value: 'download',
+                      label: 'Скачать',
+                      icon: Icons.download_done_rounded,
                     ),
+                  const AppContextMenuItem(
+                    value: 'download_to_file',
+                    label: 'Скачать в файл',
+                    icon: Icons.file_download_rounded,
+                  ),
                 ],
                 child: IconButton(
                   icon: Icon(
@@ -363,8 +367,8 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
                             child: Row(
                               children: [
                                 if (widget.leading != null) ...[
-                                  _LeadingPlayingBadge(
-                                    trackId: widget.trackId,
+                                  KeyedSubtree(
+                                    key: _coverKey,
                                     child: _adjustLeading(
                                       widget.leading!,
                                       isNarrow,
@@ -395,10 +399,12 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
                                                 onTap: widget.onTitleTap,
                                                 child: SignalBuilder(
                                                   builder: (context) {
-                                                    final isCurrent =
+                                                    final currentTrackId =
                                                         currentTrackIdSignal
-                                                                .value ==
-                                                            widget.trackId;
+                                                            .value;
+                                                    final isPlaying =
+                                                        currentTrackId ==
+                                                        widget.trackId;
 
                                                     return ValueListenableBuilder<
                                                       bool
@@ -414,18 +420,16 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
                                                             return Text(
                                                               widget.title,
                                                               style: TextStyle(
-                                                                color: isCurrent
+                                                                color: isPlaying
                                                                     ? Theme.of(
                                                                         context,
                                                                       ).colorScheme.primary
                                                                     : Theme.of(
                                                                         context,
                                                                       ).colorScheme.onSurface,
-                                                                fontWeight: isCurrent
-                                                                    ? FontWeight
-                                                                          .bold
-                                                                    : FontWeight
-                                                                          .w400,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
                                                                 fontSize:
                                                                     isNarrow
                                                                     ? 14
@@ -492,6 +496,16 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
                                             version: widget.version,
                                             fontSize: isNarrow ? 12 : 14,
                                           ),
+                                          SignalBuilder(
+                                            builder: (context) {
+                                              if (!spotifyImportedIdsSignal
+                                                  .value
+                                                  .contains(widget.trackId)) {
+                                                return const SizedBox.shrink();
+                                              }
+                                              return const SpotifyBadge();
+                                            },
+                                          ),
                                         ],
                                       ),
                                       const SizedBox(height: 2),
@@ -531,65 +545,6 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
               },
             ),
           ),
-        );
-      },
-    );
-  }
-}
-
-/// Badge over leading (usually the cover): visible only on the current track.
-/// While playing — animated equalizer, while paused — static.
-class _LeadingPlayingBadge extends StatelessWidget {
-  final String trackId;
-  final Widget child;
-
-  const _LeadingPlayingBadge({required this.trackId, required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    return SignalBuilder(
-      builder: (context) {
-        final isCurrent = currentTrackIdSignal.value == trackId;
-        if (!isCurrent) return child;
-        final isPlaying = isPlayingSignal.value;
-        final scheme = Theme.of(context).colorScheme;
-        return Stack(
-          clipBehavior: Clip.none,
-          children: [
-            child,
-            Positioned(
-              right: -6,
-              bottom: -6,
-              child: Tooltip(
-                message: isPlaying ? 'Сейчас играет' : 'Текущий трек на паузе',
-                child: Container(
-                  width: 28,
-                  height: 28,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: scheme.primary,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: scheme.surface,
-                      width: 2,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.3),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: TrackPlayingIndicator(
-                    isPlaying: isPlaying,
-                    height: 12,
-                    color: scheme.onPrimary,
-                  ),
-                ),
-              ),
-            ),
-          ],
         );
       },
     );

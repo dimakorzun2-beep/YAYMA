@@ -43,10 +43,6 @@ class _AppLayoutState extends State<AppLayout> {
         // Use the touch layout for all Android form factors, including
         // tablets. A large Android screen must not select the desktop navbar.
         final isNarrow = Platform.isAndroid || screenWidth < 600;
-        // Edge-to-edge: Flutter draws behind the Android system navigation
-        // bar, so floating UI must sit above it manually. viewPadding (not
-        // padding) stays stable when the keyboard opens.
-        final systemBottom = MediaQuery.viewPaddingOf(context).bottom;
 
         return PopScope(
           canPop: !canGoBackSignal.value,
@@ -96,7 +92,9 @@ class _AppLayoutState extends State<AppLayout> {
                   Positioned.fill(
                     child: SafeArea(
                       top: !isCustomTitlebar,
-                      bottom: false,
+                      // Android (Samsung 3-button bar / gesture bar): keep the
+                      // navbar and mini player above the system navigation.
+                      bottom: Platform.isAndroid,
                       child: Stack(
                         children: [
                           // 3. Content (set of independent stacks for each tab)
@@ -119,16 +117,12 @@ class _AppLayoutState extends State<AppLayout> {
                                   Positioned(
                                     left: 0,
                                     right: 0,
-                                    // Floating player sits above the floating
-                                    // navbar on narrow layouts, plus the
-                                    // Android system navigation inset.
                                     bottom:
-                                        ((isNarrow &&
-                                                !(Platform.isAndroid &&
-                                                    showLyricsSignal.value))
-                                            ? 80.0
-                                            : 0.0) +
-                                        systemBottom,
+                                        (isNarrow &&
+                                            !(Platform.isAndroid &&
+                                                showLyricsSignal.value))
+                                        ? 80
+                                        : 0,
                                     child: _AnimatedPlayerBar(isHome: isHome),
                                   ),
                                 ],
@@ -206,7 +200,9 @@ class _RootBucket extends StatelessWidget {
           offstage: !isVisible,
           child: TickerMode(
             enabled: isVisible,
-            child: Stack(children: _buildWindowStack(stack)),
+            child: Stack(
+              children: _buildWindowStack(stack),
+            ),
           ),
         );
       },
@@ -287,11 +283,16 @@ class _AnimatedPlayerBar extends StatelessWidget {
                 : animation;
             return SlideTransition(
               position: offsetAnimation,
-              child: FadeTransition(opacity: opacityAnimation, child: child),
+              child: FadeTransition(
+                opacity: opacityAnimation,
+                child: child,
+              ),
             );
           },
           child: shouldShowBar
-              ? const PlayerBar(key: ValueKey('player_bar_visible'))
+              ? const PlayerBar(
+                  key: ValueKey('player_bar_visible'),
+                )
               : const SizedBox.shrink(key: ValueKey('player_bar_hidden')),
         );
       },
@@ -326,17 +327,6 @@ class _WindowContent extends StatelessWidget {
             bottomPadding = hasPlayerBar ? 180 : 96;
           } else {
             bottomPadding = hasPlayerBar ? 116 : 0;
-          }
-          // Keep webview/settings content above the Android system buttons.
-          bottomPadding += MediaQuery.viewPaddingOf(context).bottom;
-        } else if (isHome && screenWidth < 600) {
-          // Home is centered non-scrollable content: its bottom row
-          // (wave settings, repeat, quality) must stay above the floating
-          // navbar. Navbar top sits at 64 (height) + 12 (gap) +
-          // systemBottom above the screen bottom, plus a small gap.
-          final navbarVisible = !(Platform.isAndroid && showLyrics);
-          if (navbarVisible) {
-            bottomPadding = 88 + MediaQuery.viewPaddingOf(context).bottom;
           }
         }
 

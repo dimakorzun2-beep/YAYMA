@@ -2,18 +2,21 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/app/init.dart';
-import 'package:yayma/src/app/session.dart';
+import 'package:yayma/src/features/auth/providers/auth_provider.dart';
 import 'package:yayma/src/features/auth/views/yandex_id_view.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
+import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/rust_cached_image.dart';
+import 'package:yayma/src/features/home/providers/home_provider.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
-import 'package:yayma/src/features/playback/providers/wave_provider.dart';
 import 'package:yayma/src/features/playback/views/wave_view.dart';
+import 'package:yayma/src/features/spotify/spotify_service.dart';
+import 'package:yayma/src/features/spotify/spotify_sync.dart';
 import 'package:yayma/src/rust/api/models.dart';
 
 class FloatingNavBar extends StatefulWidget {
@@ -91,10 +94,6 @@ class _FloatingNavBarState extends State<FloatingNavBar>
             _isHovered ||
             _isAccountMenuOpen;
         final isNarrow = MediaQuery.sizeOf(context).width < 600;
-        // Edge-to-edge: app draws behind the Android system navigation bar,
-        // so lift the floating navbar above the 3-button/gesture bar.
-        // viewPadding stays stable when the keyboard opens.
-        final systemBottom = MediaQuery.viewPaddingOf(context).bottom;
 
         const alpha = 0.5;
 
@@ -129,7 +128,7 @@ class _FloatingNavBarState extends State<FloatingNavBar>
                       if (isWaveActive) {
                         unawaited(PlaybackController.togglePlay());
                       } else {
-                        unawaited(WaveController.startMyWave());
+                        unawaited(HomeController.startMyWave());
                       }
                     },
                     style: IconButton.styleFrom(
@@ -185,11 +184,7 @@ class _FloatingNavBarState extends State<FloatingNavBar>
           onExit: (_) => setState(() => _isNavbarHovered = false),
           child: Padding(
             padding: isNarrow
-                ? EdgeInsets.only(
-                    bottom: 12 + systemBottom,
-                    left: 24,
-                    right: 24,
-                  )
+                ? const EdgeInsets.only(bottom: 12, left: 24, right: 24)
                 : const EdgeInsets.only(
                     left: 16,
                     right: 48,
@@ -262,9 +257,6 @@ class _FloatingNavBarState extends State<FloatingNavBar>
   @override
   void dispose() {
     _showWaveTimer?.cancel();
-    _showWaveTimer = null;
-    _overlayEntry?.remove();
-    _overlayEntry = null;
     super.dispose();
   }
 }
@@ -453,7 +445,9 @@ class _AccountMenuDialog extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
+            const _ServicesSection(),
+            const SizedBox(height: 8),
             _MenuTile(
               icon: Icons.badge_outlined,
               title: 'Управление аккаунтом',
@@ -490,7 +484,7 @@ class _AccountMenuDialog extends StatelessWidget {
               icon: Icons.logout_rounded,
               title: 'Выйти из аккаунта',
               onTap: () {
-                unawaited(AppInit.logout());
+                unawaited(logout());
                 Navigator.pop(context);
               },
             ),
@@ -669,6 +663,157 @@ class _NavIcon extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+
+/// "Yandex Music / Spotify" picker in the account menu.
+class _ServicesSection extends StatefulWidget {
+  const _ServicesSection();
+
+  @override
+  State<_ServicesSection> createState() => _ServicesSectionState();
+}
+
+class _ServicesSectionState extends State<_ServicesSection> {
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(SpotifyService.load());
+  }
+
+  Future<void> _connect() async {
+    final controller = TextEditingController(
+      text: spotifyClientIdSignal.value,
+    );
+    final clientId = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Подключить Spotify'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '1. Открой developer.spotify.com/dashboard и создай приложение.\n'
+              '2. В Redirect URIs добавь:\n$kSpotifyRedirectUri\n'
+              '3. Отметь Web API и вставь сюда Client ID.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(labelText: 'Client ID'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Войти'),
+          ),
+        ],
+      ),
+    );
+    if (clientId == null || clientId.trim().isEmpty) return;
+    setState(() => _busy = true);
+    final error = await SpotifyService.login(clientId);
+    if (mounted) setState(() => _busy = false);
+    if (error != null) {
+      showAppError(error);
+    } else {
+      showAppSuccess('Spotify подключён');
+      unawaited(SpotifySync.importLikes());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return SignalBuilder(
+      builder: (context) {
+        final connected = spotifyConnectedSignal.value;
+        final name = spotifyUserNameSignal.value;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 12, bottom: 4),
+              child: Text(
+                'Музыкальные сервисы',
+                style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
+              ),
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.music_note_rounded,
+                  color: Color(0xFFFFCC00)),
+              title: const Text('Яндекс Музыка'),
+              subtitle: const Text('Подключено'),
+              trailing: const Icon(Icons.check_circle_rounded,
+                  color: Color(0xFFFFCC00)),
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.graphic_eq_rounded,
+                  color: Color(0xFF1DB954)),
+              title: const Text('Spotify'),
+              subtitle: Text(
+                connected
+                    ? (name != null ? 'Подключено: $name' : 'Подключено')
+                    : 'Не подключено',
+              ),
+              trailing: _busy
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: M3ELoadingIndicator(),
+                    )
+                  : TextButton(
+                      onPressed: connected
+                          ? () => unawaited(SpotifyService.logout())
+                          : () => unawaited(_connect()),
+                      child: Text(connected ? 'Отключить' : 'Подключить'),
+                    ),
+            ),
+            if (connected) ...[
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.sync_rounded),
+                title: const Text('Перенести треки из Spotify'),
+                subtitle: Text(
+                  spotifyImportStatusSignal.value ??
+                      'Все любимые из Spotify попадут в «Мне нравится»',
+                ),
+                onTap: spotifyImportStatusSignal.value != null
+                    ? null
+                    : () => unawaited(SpotifySync.importLikes()),
+              ),
+              SwitchListTile(
+                dense: true,
+                title: const Text('Лайки и в Spotify'),
+                subtitle: const Text('«Мне нравится» добавляется в оба сервиса'),
+                value: spotifyLikeSyncSignal.value,
+                onChanged: (v) =>
+                    unawaited(SpotifyService.setLikeSync(value: v)),
+              ),
+              SwitchListTile(
+                dense: true,
+                title: const Text('Spotify в Моей волне'),
+                subtitle: const Text('Волна по твоим трекам из Spotify'),
+                value: spotifyWaveSignal.value,
+                onChanged: (v) => unawaited(SpotifyService.setWave(value: v)),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }
