@@ -1,9 +1,10 @@
 use crate::audio::cache::UrlCache;
 use crate::{
     audio::{
-        commands::AudioMessage, controller::AudioController, playback::PlaybackEngine,
-        progress::TrackProgress, queue::QueueManager, queue::as_wave_seed, signals::AudioSignals,
-        state::SystemState, stream_manager::StreamManager, yandex::YandexProvider,
+        commands::AudioMessage, controller::AudioController,
+        fetcher::is_usable_wave_session, playback::PlaybackEngine, progress::TrackProgress,
+        queue::QueueManager, queue::as_wave_seed, signals::AudioSignals, state::SystemState,
+        stream_manager::StreamManager, yandex::YandexProvider,
     },
     http::{ApiService, SessionExt},
 };
@@ -15,12 +16,58 @@ use parking_lot::RwLock as PRwLock;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc};
+#[cfg(not(any(target_os = "android")))]
+use tokio::sync::Mutex;
 use yandex_music::model::track::Track;
+
+#[path = "system_loading.rs"]
+mod system_loading;
+#[path = "system_wave.rs"]
+mod system_wave;
+
+use system_wave::WavePostAction;
+
+// Abort-on-Drop guard for detached SMTC tasks (polling loop has no
+// other shutdown signal); explicit stop via `AudioSystem::shutdown`.
+#[cfg(not(any(target_os = "android")))]
+struct AbortOnDrop {
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+#[cfg(not(any(target_os = "android")))]
+impl AbortOnDrop {
+    fn new(handle: tokio::task::JoinHandle<()>) -> Self {
+        Self {
+            handle: Some(handle),
+        }
+    }
+
+    fn shutdown(&mut self) {
+        if let Some(h) = self.handle.take() {
+            h.abort();
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "android")))]
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+// Selects the head of the unified advance path (ended vs user skip).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AdvanceReason {
+    TrackEnded,
+    Skipped,
+}
 
 pub type EffectHandles =
     Arc<parking_lot::RwLock<foldhash::HashMap<String, crate::audio::fx::EffectHandle>>>;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+const PREVIOUS_TRACK_RESTART_THRESHOLD: Duration = Duration::from_secs(5);
 
 pub struct AudioSystem {
     controller: AudioController,
@@ -32,6 +79,8 @@ pub struct AudioSystem {
     tx: mpsc::Sender<AudioMessage>,
     db: Arc<tokio::sync::Mutex<crate::db::AppDatabase>>,
     context_generation: Arc<AtomicU64>,
+    #[cfg(not(any(target_os = "android")))]
+    smtc_guards: Vec<AbortOnDrop>,
 }
 
 impl AudioSystem {
@@ -119,6 +168,8 @@ impl AudioSystem {
             tx: tx.clone(),
             db,
             context_generation: Arc::new(AtomicU64::new(0)),
+            #[cfg(not(any(target_os = "android")))]
+            smtc_guards: Vec::new(),
         };
 
         let mut system_loop = system;
@@ -132,11 +183,12 @@ impl AudioSystem {
         {
             let tx_clone = tx.clone();
             let mut rx_smtc = smtc_cmd_rx;
-            tokio::spawn(async move {
+            let fwd_handle = tokio::spawn(async move {
                 while let Some(msg) = rx_smtc.recv().await {
                     let _ = tx_clone.send(msg).await;
                 }
             });
+            system_loop.smtc_guards.push(AbortOnDrop::new(fwd_handle));
         }
 
         // Monitor signals to update SMTC
@@ -144,7 +196,7 @@ impl AudioSystem {
         {
             let smtc_clone = smtc.clone();
             let signals_clone = signals.clone();
-            tokio::spawn(async move {
+            let poll_handle = tokio::spawn(async move {
                 let mut last_track_id = None;
                 let mut last_playing = false;
 
@@ -171,6 +223,7 @@ impl AudioSystem {
                     }
                 }
             });
+            system_loop.smtc_guards.push(AbortOnDrop::new(poll_handle));
         }
 
         // Main Audio Loop
@@ -178,13 +231,23 @@ impl AudioSystem {
             while let Some(msg) = rx.recv().await {
                 system_loop.process_message(msg).await;
             }
+            // Channel closed on context teardown: stop SMTC loops and the
+            // controller monitor/playback task in a defined order instead
+            // of relying on Drop alone (Drop guards stay as a backstop).
+            system_loop.shutdown().await;
         });
 
         Ok((tx, signals, state, effect_handles))
     }
 
     /// Universal spawn for loading playback context
-    fn spawn_fetch_context<F, Fut>(&self, fetcher: F)
+    fn begin_context_change(&self) -> u64 {
+        self.context_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1)
+    }
+
+    fn spawn_fetch_context<F, Fut>(&self, generation: u64, fetcher: F)
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: std::future::Future<
@@ -200,33 +263,62 @@ impl AudioSystem {
             + 'static,
     {
         let tx = self.tx.clone();
-        let error_sink = self.error_sink.clone();
-        let signals = self.signals.clone();
-        let context_generation = self.context_generation.clone();
-        let request_generation = context_generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.signals.set_buffering(true);
         tokio::spawn(async move {
-            match fetcher().await {
-                Ok((ctx, tracks, index)) => {
-                    if context_generation.load(Ordering::SeqCst) == request_generation {
-                        let _ = tx.send(AudioMessage::LoadContext(ctx, tracks, index)).await;
-                    }
-                }
-                Err(e) => {
-                    // The context request is not the audio stream itself.  Do not leave
-                    // the global buffering flag armed after a playlist/album request fails;
-                    // otherwise the playback watchdog can pause an unrelated track.
-                    if context_generation.load(Ordering::SeqCst) == request_generation {
-                        error_sink(e);
-                        signals.set_buffering(false);
-                    }
-                }
-            }
+            let result = fetcher().await;
+            let _ = tx
+                .send(AudioMessage::ContextFetched { generation, result })
+                .await;
         });
     }
 
     pub fn get_effect_handles(&self) -> EffectHandles {
         self.controller.get_effect_handles()
+    }
+
+    // Explicit stop for background tasks: SMTC loops plus the controller
+    // monitor loop and in-flight playback task. Idempotent; Drop guards
+    // abort the same tasks as a backstop. Call on context teardown
+    // (e.g. re-login spawns a fresh AudioSystem in-process).
+    pub async fn shutdown(&mut self) {
+        #[cfg(not(any(target_os = "android")))]
+        for g in &mut self.smtc_guards {
+            g.shutdown();
+        }
+        self.controller.shutdown().await;
+    }
+
+    // Unified offline-backed single-track spawn; `source` selects the
+    // album/playlist/liked remote branch (resolver lives in system_loading).
+    fn spawn_single_track_with_offline(
+        &self,
+        source: system_loading::SingleTrackSource,
+        tid: String,
+    ) {
+        // Offline check + DB read run in background so the actor stays
+        // responsive to Pause/Seek/Next while they complete.
+        let generation = self.begin_context_change();
+        let tx = self.tx.clone();
+        let stream_manager = self.queue.stream_manager.clone();
+        let db = self.db.clone();
+        let yandex = self.yandex.clone();
+        let state = match &source {
+            system_loading::SingleTrackSource::Liked => Some(self.state.clone()),
+            _ => None,
+        };
+        tokio::spawn(async move {
+            system_loading::resolve_single_track_offline_or_remote(
+                source,
+                tid,
+                stream_manager,
+                db,
+                state,
+                yandex,
+                tx,
+                generation,
+            )
+            .await;
+        });
     }
 
     async fn load_context(
@@ -235,8 +327,46 @@ impl AudioSystem {
         tracks: im::Vector<Track>,
         index: usize,
     ) {
+        self.load_context_inner(None, ctx, tracks, index).await;
+    }
+
+    async fn load_fetched_context(
+        &mut self,
+        generation: u64,
+        ctx: crate::audio::queue::PlaybackContext,
+        tracks: im::Vector<Track>,
+        index: usize,
+    ) {
+        self.load_context_inner(Some(generation), ctx, tracks, index)
+            .await;
+    }
+
+    // Single loader; `Some(generation)` enables the fetched-path
+    // generation guard (entry + right before applying state).
+    async fn load_context_inner(
+        &mut self,
+        generation: Option<u64>,
+        ctx: crate::audio::queue::PlaybackContext,
+        tracks: im::Vector<Track>,
+        index: usize,
+    ) {
+        if let Some(g) = generation
+            && self.context_generation.load(Ordering::Acquire) != g
+        {
+            return;
+        }
+
         let in_wave = matches!(&ctx, crate::audio::queue::PlaybackContext::Wave(_));
         if let Some(track) = self.queue.load(ctx, tracks, index).await {
+            // Keep the check in the actor immediately before applying the loaded
+            // queue/controller state. ContextFetched messages are the only path
+            // where a background fetch can reach playback.
+            if let Some(g) = generation
+                && self.context_generation.load(Ordering::Acquire) != g
+            {
+                return;
+            }
+
             if in_wave {
                 self.send_wave_started();
             }
@@ -286,6 +416,19 @@ impl AudioSystem {
 
     async fn process_message(&mut self, msg: AudioMessage) {
         match msg {
+            AudioMessage::ContextFetched { generation, result } => match result {
+                Ok((ctx, tracks, index)) => {
+                    self.load_fetched_context(generation, ctx, tracks, index)
+                        .await;
+                }
+                Err(e) => {
+                    if self.context_generation.load(Ordering::Acquire) != generation {
+                        return;
+                    }
+                    (self.error_sink)(e);
+                    self.signals.set_buffering(false);
+                }
+            },
             AudioMessage::PlayPause => {
                 if self.signals.is_playing.get() {
                     self.controller.pause().await;
@@ -296,7 +439,7 @@ impl AudioSystem {
             AudioMessage::Pause => self.controller.pause().await,
             AudioMessage::Resume => self.controller.resume().await,
             AudioMessage::Stop => {
-                self.context_generation.fetch_add(1, Ordering::SeqCst);
+                self.begin_context_change();
                 self.controller.stop().await;
                 self.queue.clear();
             }
@@ -304,7 +447,13 @@ impl AudioSystem {
                 self.play_next().await;
             }
             AudioMessage::Prev => {
-                if let Some(prev_track) = self.queue.get_previous_track() {
+                if self.signals.position_ms.get()
+                    > PREVIOUS_TRACK_RESTART_THRESHOLD.as_millis() as u64
+                {
+                    self.controller.seek(Duration::ZERO).await;
+                    self.signals
+                        .update_progress(0, self.signals.duration_ms.get());
+                } else if let Some(prev_track) = self.queue.get_previous_track() {
                     self.controller
                         .play_track(prev_track, false, Duration::ZERO, false)
                         .await;
@@ -321,20 +470,21 @@ impl AudioSystem {
             AudioMessage::ToggleMute => self.controller.toggle_mute(),
 
             AudioMessage::PlayTrack(track) => {
-                self.context_generation.fetch_add(1, Ordering::SeqCst);
+                self.begin_context_change();
                 self.load_standalone(im::Vector::from(vec![track]), false, Duration::ZERO)
                     .await
             }
             AudioMessage::RestoreTrack(track, pos, was_playing) => {
-                self.context_generation.fetch_add(1, Ordering::SeqCst);
+                self.begin_context_change();
                 self.load_standalone(im::Vector::from(vec![track]), !was_playing, pos)
                     .await
             }
             AudioMessage::LoadContext(ctx, tracks, index) => {
+                self.begin_context_change();
                 self.load_context(ctx, tracks, index).await;
             }
             AudioMessage::LoadTracks(tracks) => {
-                self.context_generation.fetch_add(1, Ordering::SeqCst);
+                self.begin_context_change();
                 self.load_standalone(im::Vector::from(tracks), false, Duration::ZERO)
                     .await
             }
@@ -346,9 +496,9 @@ impl AudioSystem {
             AudioMessage::ToggleRepeatMode => self.queue.toggle_repeat_mode(),
 
             AudioMessage::PlayPlaylist(kind) => {
-                self.context_generation.fetch_add(1, Ordering::SeqCst);
+                let generation = self.begin_context_change();
                 let yandex = self.yandex.clone();
-                self.spawn_fetch_context(move || async move {
+                self.spawn_fetch_context(generation, move || async move {
                     yandex
                         .fetch_playlist_context(kind, None)
                         .await
@@ -356,9 +506,9 @@ impl AudioSystem {
                 });
             }
             AudioMessage::PlayAlbum(album_id) => {
-                self.context_generation.fetch_add(1, Ordering::SeqCst);
+                let generation = self.begin_context_change();
                 let yandex = self.yandex.clone();
-                self.spawn_fetch_context(move || async move {
+                self.spawn_fetch_context(generation, move || async move {
                     yandex
                         .fetch_album_context(album_id, None)
                         .await
@@ -366,84 +516,27 @@ impl AudioSystem {
                 });
             }
             AudioMessage::PlayAlbumTrack(aid, tid) => {
-                self.context_generation.fetch_add(1, Ordering::SeqCst);
-                let local_ctx = if self.queue.stream_manager.is_track_offline(&tid).await {
-                    self.build_single_track_offline(&tid).await
-                } else {
-                    None
-                };
-
-                if let Some((tracks, index)) = local_ctx {
-                    self.load_context(
-                        crate::audio::queue::PlaybackContext::Standalone,
-                        tracks,
-                        index,
-                    )
-                    .await;
-                } else {
-                    let yandex = self.yandex.clone();
-                    self.spawn_fetch_context(move || async move {
-                        yandex
-                            .fetch_album_context(aid, Some(tid))
-                            .await
-                            .map_err(|e| format!("Failed to load album: {e}"))
-                    });
-                }
+                self.spawn_single_track_with_offline(
+                    system_loading::SingleTrackSource::AlbumTrack { album_id: aid },
+                    tid,
+                );
             }
             AudioMessage::PlayPlaylistTrack(kind, tid) => {
-                self.context_generation.fetch_add(1, Ordering::SeqCst);
-                let local_ctx = if self.queue.stream_manager.is_track_offline(&tid).await {
-                    self.build_single_track_offline(&tid).await
-                } else {
-                    None
-                };
-
-                if let Some((tracks, index)) = local_ctx {
-                    self.load_context(
-                        crate::audio::queue::PlaybackContext::Standalone,
-                        tracks,
-                        index,
-                    )
-                    .await;
-                } else {
-                    let yandex = self.yandex.clone();
-                    self.spawn_fetch_context(move || async move {
-                        yandex
-                            .fetch_playlist_context(kind, Some(tid))
-                            .await
-                            .map_err(|e| format!("Failed to load playlist track: {e}"))
-                    });
-                }
+                self.spawn_single_track_with_offline(
+                    system_loading::SingleTrackSource::PlaylistTrack { kind },
+                    tid,
+                );
             }
             AudioMessage::PlayLikedTrack(tid) => {
-                self.context_generation.fetch_add(1, Ordering::SeqCst);
-                let local_ctx = if self.queue.stream_manager.is_track_offline(&tid).await {
-                    self.build_local_liked_context(&tid).await
-                } else {
-                    None
-                };
-
-                if let Some((tracks, index)) = local_ctx {
-                    self.load_context(
-                        crate::audio::queue::PlaybackContext::Standalone,
-                        tracks,
-                        index,
-                    )
-                    .await;
-                } else {
-                    let yandex = self.yandex.clone();
-                    self.spawn_fetch_context(move || async move {
-                        yandex
-                            .fetch_liked_context(Some(tid))
-                            .await
-                            .map_err(|e| format!("Failed to load liked track: {e}"))
-                    });
-                }
+                self.spawn_single_track_with_offline(
+                    system_loading::SingleTrackSource::Liked,
+                    tid,
+                );
             }
             AudioMessage::StartWave(seeds) => {
-                self.context_generation.fetch_add(1, Ordering::SeqCst);
+                let generation = self.begin_context_change();
                 let yandex = self.yandex.clone();
-                self.spawn_fetch_context(move || async move {
+                self.spawn_fetch_context(generation, move || async move {
                     yandex
                         .fetch_wave_context(seeds)
                         .await
@@ -468,8 +561,8 @@ impl AudioSystem {
                             self.send_wave_like(&track);
                         }
                     } else {
-                        self.send_wave_feedback("like", Some(track_id), None, true);
-                        self.queue.refresh_wave_queue();
+                        let batch = self.queue.wave_batch_for_id(&track_id);
+                        self.send_wave_feedback("like", Some(track_id), batch, None);
                     }
                 }
             }
@@ -481,8 +574,8 @@ impl AudioSystem {
                             self.send_wave_unlike(&track);
                         }
                     } else {
-                        self.send_wave_feedback("unlike", Some(track_id), None, true);
-                        self.queue.refresh_wave_queue();
+                        let batch = self.queue.wave_batch_for_id(&track_id);
+                        self.send_wave_feedback("unlike", Some(track_id), batch, None);
                     }
                 }
             }
@@ -494,7 +587,8 @@ impl AudioSystem {
                             self.send_wave_dislike_skip(&track).await;
                         }
                     } else {
-                        self.send_wave_feedback("dislike", Some(track_id), None, true);
+                        let batch = self.queue.wave_batch_for_id(&track_id);
+                        self.send_wave_feedback("dislike", Some(track_id), batch, None);
                         self.queue.refresh_wave_queue();
                         self.play_next().await;
                     }
@@ -508,17 +602,20 @@ impl AudioSystem {
                             self.send_wave_undislike(&track);
                         }
                     } else {
-                        self.send_wave_feedback("undislike", Some(track_id), None, true);
+                        let batch = self.queue.wave_batch_for_id(&track_id);
+                        self.send_wave_feedback("undislike", Some(track_id), batch, None);
                         self.queue.refresh_wave_queue();
                     }
                 }
             }
             AudioMessage::SetAudioDevice(device_name) => {
                 self.signals.selected_device.set(device_name.clone());
-                {
-                    let mut db = self.db.lock().await;
+                // Don't hold the actor on a DB write; persist in background.
+                let db = self.db.clone();
+                tokio::spawn(async move {
+                    let mut db = db.lock().await;
                     let _ = db.save_setting("audio_device", &device_name).await;
-                }
+                });
                 self.recreate_stream().await;
             }
             AudioMessage::RecreateStream => {
@@ -531,32 +628,28 @@ impl AudioSystem {
     }
 
     async fn on_track_ended(&mut self) {
-        self.queue.wave_finish_track();
-
-        if let Some(next_track) = self.queue.get_next_track().await {
-            if self.queue.in_wave() {
-                self.send_wave_track_started(&next_track);
-            }
-            self.controller
-                .play_track(next_track, false, Duration::ZERO, false)
-                .await;
-        } else {
-            // Queue ended, start "My Wave"
-            let yandex = self.yandex.clone();
-            self.spawn_fetch_context(move || async move {
-                yandex
-                    .fetch_wave_context(vec!["user:onyourwave".to_string()])
-                    .await
-                    .map_err(|e| format!("Failed to auto-start wave: {e}"))
-            });
-        }
+        self.advance_queue(AdvanceReason::TrackEnded).await;
     }
 
     async fn play_next(&mut self) {
-        let next = if self.queue.in_wave() {
-            self.queue.skip_wave_track().await
-        } else {
-            self.queue.get_next_track().await
+        self.advance_queue(AdvanceReason::Skipped).await;
+    }
+
+    // Single advance path; reason selects wave_finish+get_next (natural end)
+    // vs skip_wave/skip (user skip). Shared tail plays or auto-starts wave.
+    async fn advance_queue(&mut self, reason: AdvanceReason) {
+        let next = match reason {
+            AdvanceReason::TrackEnded => {
+                self.queue.wave_finish_track();
+                self.queue.get_next_track().await
+            }
+            AdvanceReason::Skipped => {
+                if self.queue.in_wave() {
+                    self.queue.skip_wave_track().await
+                } else {
+                    self.queue.skip_track().await
+                }
+            }
         };
 
         if let Some(next_track) = next {
@@ -569,7 +662,8 @@ impl AudioSystem {
         } else {
             // Queue ended, start "My Wave"
             let yandex = self.yandex.clone();
-            self.spawn_fetch_context(move || async move {
+            let generation = self.begin_context_change();
+            self.spawn_fetch_context(generation, move || async move {
                 yandex
                     .fetch_wave_context(vec!["user:onyourwave".to_string()])
                     .await
@@ -582,31 +676,60 @@ impl AudioSystem {
         &self,
         feedback_type: &'static str,
         track_id: Option<String>,
+        batch_id: Option<String>,
         total_played: Option<Duration>,
-        include_batch_id: bool,
     ) {
         let session = match self.queue.wave_context() {
             Some(s) => s,
             None => return,
         };
+        // Never send feedback for a dead session: without radio_session_id
+        // the request goes to the user:onyourwave fallback URL with a foreign
+        // batch_id (HTTP 400), and a terminated session is rejected too.
+        // The session is repaired by preservation (fetcher) / recreate (queue).
+        if session.terminated || !is_usable_wave_session(&session) {
+            tracing::error!(
+                feedback_type,
+                track_id = track_id.as_deref().unwrap_or("-"),
+                batch_id = %session.batch_id,
+                radio_session_id = session.radio_session_id.as_deref().unwrap_or("-"),
+                terminated = session.terminated,
+                "wave_feedback_skipped_dead_session"
+            );
+            return;
+        }
         let station_id = session.station_id().to_string();
-        let batch_id = include_batch_id.then(|| session.batch_id.clone());
+        // Per-track batch attribution like the original client; fall back to
+        // the stored session batch for tracks served before per-track
+        // mapping existed. `radioStarted` carries no batch.
+        let batch_id = match (track_id.is_some(), batch_id) {
+            (false, _) => None,
+            (true, Some(batch)) => Some(batch),
+            (true, None) => Some(session.batch_id.clone()),
+        };
         let from = Some(session.source_id().to_string());
 
         let api = self.yandex.api.clone();
         tokio::spawn(async move {
             if let Err(e) = api
                 .send_rotor_feedback(
-                    station_id,
-                    batch_id,
+                    station_id.clone(),
+                    batch_id.clone(),
                     feedback_type,
-                    track_id,
+                    track_id.clone(),
                     from,
                     total_played,
                 )
                 .await
             {
-                tracing::warn!(error = %e, feedback_type, "wave_feedback_failed");
+                tracing::warn!(
+                    error = %e,
+                    feedback_type,
+                    track_id = track_id.as_deref().unwrap_or("-"),
+                    station_id = %station_id,
+                    batch_id = batch_id.as_deref().unwrap_or("-"),
+                    "wave_feedback_failed"
+                );
             } else {
                 tracing::info!(feedback_type, "wave_feedback_sent");
             }
@@ -614,101 +737,52 @@ impl AudioSystem {
     }
 
     pub fn send_wave_started(&self) {
-        self.send_wave_feedback("radioStarted", None, None, false);
+        self.send_wave_feedback("radioStarted", None, None, None);
     }
 
     pub fn send_wave_track_started(&self, track: &Track) {
         let track_id = as_wave_seed(track);
-        self.send_wave_feedback("trackStarted", Some(track_id), None, true);
+        let batch = self.queue.wave_batch_for_track(track);
+        self.send_wave_feedback("trackStarted", Some(track_id), batch, None);
+    }
+
+    // Single helper for track feedback; `post` keeps the dislike-only
+    // queue refresh (like/unlike leave the prefetch buffer intact).
+    fn send_wave_track_with_post(
+        &mut self,
+        feedback_type: &'static str,
+        track: &Track,
+        post: WavePostAction,
+    ) {
+        let (track_id, batch) = system_wave::track_feedback_parts(&self.queue, track);
+        self.send_wave_feedback(feedback_type, Some(track_id), batch, None);
+        if post == WavePostAction::Refresh {
+            self.queue.refresh_wave_queue();
+        }
     }
 
     pub fn send_wave_like(&mut self, track: &Track) {
-        let track_id = as_wave_seed(track);
-        self.send_wave_feedback("like", Some(track_id), None, true);
-        self.queue.refresh_wave_queue();
+        // Like/unlike don't change the queue: only send feedback, keep the
+        // 3-track prefetch buffer intact (refresh only on dislike).
+        self.send_wave_track_with_post("like", track, WavePostAction::None);
     }
 
     pub fn send_wave_unlike(&mut self, track: &Track) {
-        let track_id = as_wave_seed(track);
-        self.send_wave_feedback("unlike", Some(track_id), None, true);
-        self.queue.refresh_wave_queue();
+        self.send_wave_track_with_post("unlike", track, WavePostAction::None);
     }
 
     pub fn send_wave_dislike(&mut self, track: &Track) {
-        let track_id = as_wave_seed(track);
-        self.send_wave_feedback("dislike", Some(track_id), None, true);
-        self.queue.refresh_wave_queue();
+        self.send_wave_track_with_post("dislike", track, WavePostAction::Refresh);
     }
 
     pub async fn send_wave_dislike_skip(&mut self, track: &Track) {
-        let track_id = as_wave_seed(track);
-        self.send_wave_feedback("dislike", Some(track_id), None, true);
-        self.queue.refresh_wave_queue();
+        self.send_wave_track_with_post("dislike", track, WavePostAction::Refresh);
 
         self.play_next().await;
     }
 
     pub fn send_wave_undislike(&mut self, track: &Track) {
-        let track_id = as_wave_seed(track);
-        self.send_wave_feedback("undislike", Some(track_id), None, true);
-        self.queue.refresh_wave_queue();
-    }
-
-    /// Builds a playback queue from locally cached (DB) metadata for the liked
-    /// tracks list, without any network access. Used so that downloaded liked
-    /// tracks can be played while offline.
-    async fn build_local_liked_context(
-        &self,
-        track_id: &str,
-    ) -> Option<(im::Vector<Track>, usize)> {
-        let (liked_ids, _) = self.state.read().await.liked.ordered_snapshot();
-        if liked_ids.is_empty() {
-            return None;
-        }
-
-        let metadata = self
-            .db
-            .lock()
-            .await
-            .get_track_metadata(&liked_ids)
-            .await
-            .ok()?;
-        let mut metadata_map: foldhash::HashMap<String, crate::storage::db::TrackMetadata> = {
-            use foldhash::HashMapExt;
-            foldhash::HashMap::new()
-        };
-        for m in metadata {
-            metadata_map.insert(m.id.clone(), m);
-        }
-
-        let mut tracks = im::Vector::new();
-        let mut index = None;
-        for id in &liked_ids {
-            if let Some(m) = metadata_map.remove(id) {
-                if id == track_id {
-                    index = Some(tracks.len());
-                }
-                tracks.push_back(crate::util::track::track_from_metadata(&m));
-            }
-        }
-
-        Some((tracks, index?))
-    }
-
-    /// Builds a single-track playback queue from locally cached (DB) metadata,
-    /// without any network access. Used as an offline fallback for album/playlist
-    /// tracks, where (unlike liked tracks) we don't keep a local ordered track
-    /// list to reconstruct the full queue context.
-    async fn build_single_track_offline(
-        &self,
-        track_id: &str,
-    ) -> Option<(im::Vector<Track>, usize)> {
-        let ids = vec![track_id.to_string()];
-        let metadata = self.db.lock().await.get_track_metadata(&ids).await.ok()?;
-        let m = metadata.into_iter().find(|m| m.id == track_id)?;
-        let mut tracks = im::Vector::new();
-        tracks.push_back(crate::util::track::track_from_metadata(&m));
-        Some((tracks, 0))
+        self.send_wave_track_with_post("undislike", track, WavePostAction::Refresh);
     }
 
     pub async fn sync_liked_collection_with(

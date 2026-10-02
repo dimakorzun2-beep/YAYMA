@@ -1,13 +1,13 @@
 import 'dart:async';
-import 'dart:ui' as ui;
+import 'dart:math' as math;
 
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/app_context_menu.dart';
+import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
 import 'package:yayma/src/features/core/views/widgets/responsive.dart';
-import 'package:yayma/src/features/core/views/widgets/rust_cached_image.dart';
 import 'package:yayma/src/features/core/views/widgets/track_elements.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
 import 'package:yayma/src/rust/api/models.dart';
@@ -208,11 +208,11 @@ class CommonDetailHeader extends StatelessWidget {
       child: isNarrow
           ? Column(
               children: [
-                TrackCover(
-                  url: coverUrl,
+                AppCover(
+                  coverUrl: coverUrl,
                   size: actualCoverSize,
                   borderRadius: 16,
-                  isCircle: isCircle,
+                  circle: isCircle,
                   canExpand: true,
                   heroTag: coverUrl,
                 ),
@@ -225,11 +225,11 @@ class CommonDetailHeader extends StatelessWidget {
                   ? CrossAxisAlignment.center
                   : CrossAxisAlignment.end,
               children: [
-                TrackCover(
-                  url: coverUrl,
+                AppCover(
+                  coverUrl: coverUrl,
                   size: actualCoverSize,
                   borderRadius: 16,
-                  isCircle: isCircle,
+                  circle: isCircle,
                   canExpand: true,
                   heroTag: coverUrl,
                 ),
@@ -448,12 +448,51 @@ class CommonProgressSlider extends StatefulWidget {
 
 class _CommonProgressSliderState extends State<CommonProgressSlider> {
   double? _dragValue;
-  Timer? _dragEndTimer;
+  String? _dragTrackId;
+  Timer? _confirmTimer;
 
   @override
   void dispose() {
-    _dragEndTimer?.cancel();
+    _confirmTimer?.cancel();
     super.dispose();
+  }
+
+  void _clearDrag() {
+    _confirmTimer?.cancel();
+    _confirmTimer = null;
+    if (mounted && _dragValue != null) {
+      setState(() {
+        _dragValue = null;
+        _dragTrackId = null;
+      });
+    }
+  }
+
+  void _onDragStart(double val) {
+    _confirmTimer?.cancel();
+    setState(() {
+      _dragValue = val;
+      _dragTrackId = currentTrackIdSignal.peek();
+    });
+  }
+
+  void _onDragUpdate(double val) {
+    setState(() => _dragValue = val);
+  }
+
+  void _onDragEnd(double val) {
+    setState(() {
+      _dragValue = val;
+      _dragTrackId = currentTrackIdSignal.peek();
+    });
+    // Fallback: don't stick forever if the seek echo never arrives
+    // (e.g. seek failed). The drag is normally cleared earlier once
+    // playerProgressSignal confirms the new position.
+    _confirmTimer?.cancel();
+    _confirmTimer = Timer(const Duration(seconds: 2), _clearDrag);
+    unawaited(
+      PlaybackController.seekTo(Duration(milliseconds: val.toInt())),
+    );
   }
 
   @override
@@ -463,6 +502,17 @@ class _CommonProgressSliderState extends State<CommonProgressSlider> {
       child: SignalBuilder(
         builder: (context) {
           final progress = trackProgressSignal();
+          final trackId = currentTrackIdSignal();
+          // Seek confirmed: backend echoed the new position (or track changed)
+          // — drop the held drag value so the live signal takes over.
+          if (_dragValue != null) {
+            final confirmed =
+                trackId != _dragTrackId ||
+                (progress.positionMs - _dragValue!).abs() < 1000;
+            if (confirmed) {
+              WidgetsBinding.instance.addPostFrameCallback((_) => _clearDrag());
+            }
+          }
           final dur = progress.durationMs;
           final displayPosition = _dragValue ?? progress.positionMs;
           final trackHeight = widget.compact ? 4.0 : 6.0;
@@ -508,29 +558,9 @@ class _CommonProgressSliderState extends State<CommonProgressSlider> {
                                 context,
                               ).colorScheme.onSurface.withValues(alpha: 0.15),
                             ),
-                            onChangeStart: (val) {
-                              setState(() => _dragValue = val);
-                            },
-                            onChanged: (val) {
-                              setState(() => _dragValue = val);
-                            },
-                            onChangeEnd: (val) {
-                              setState(() => _dragValue = val);
-                              _dragEndTimer?.cancel();
-                              _dragEndTimer = Timer(
-                                const Duration(milliseconds: 500),
-                                () {
-                                  if (mounted) {
-                                    setState(() => _dragValue = null);
-                                  }
-                                },
-                              );
-                              unawaited(
-                                PlaybackController.seekTo(
-                                  Duration(milliseconds: val.toInt()),
-                                ),
-                              );
-                            },
+                            onChangeStart: _onDragStart,
+                            onChanged: _onDragUpdate,
+                            onChangeEnd: _onDragEnd,
                           ),
                         ),
                       ),
@@ -564,29 +594,9 @@ class _CommonProgressSliderState extends State<CommonProgressSlider> {
                           context,
                         ).colorScheme.onSurface.withValues(alpha: 0.15),
                       ),
-                      onChangeStart: (val) {
-                        setState(() => _dragValue = val);
-                      },
-                      onChanged: (val) {
-                        setState(() => _dragValue = val);
-                      },
-                      onChangeEnd: (val) {
-                        setState(() => _dragValue = val);
-                        _dragEndTimer?.cancel();
-                        _dragEndTimer = Timer(
-                          const Duration(milliseconds: 500),
-                          () {
-                            if (mounted) {
-                              setState(() => _dragValue = null);
-                            }
-                          },
-                        );
-                        unawaited(
-                          PlaybackController.seekTo(
-                            Duration(milliseconds: val.toInt()),
-                          ),
-                        );
-                      },
+                      onChangeStart: _onDragStart,
+                      onChanged: _onDragUpdate,
+                      onChangeEnd: _onDragEnd,
                     ),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -713,50 +723,61 @@ class _AnimatedLikeButtonState extends State<AnimatedLikeButton>
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        behavior: HitTestBehavior.opaque,
-        child: SizedBox(
-          width: hexSize + 12,
-          height: hexSize + 12,
-          child: AnimatedBuilder(
-            animation: _burst,
-            builder: (context, child) {
-              return Stack(
-                alignment: Alignment.center,
-                children: [
-                  if (_burst.isAnimating || _burst.value > 0)
-                    CustomPaint(
-                      size: Size(hexSize * 2.4, hexSize * 2.4),
-                      painter: _BurstPainter(
-                        progress: _ringGrowth.value,
-                        opacity: _ringFade.value,
+      // Local Material: ink paints here, not on a Material buried under the
+      // player backdrop, where the hover layer would be invisible.
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: widget.onTap,
+          // Matches the global iconButtonTheme corner radius so the hover
+          // backdrop looks identical to neighbouring player buttons.
+          borderRadius: BorderRadius.circular(14),
+          // Match the M3 IconButton state layer, otherwise hover is invisible.
+          hoverColor: cs.onSurfaceVariant.withValues(alpha: 0.1),
+          highlightColor: cs.onSurfaceVariant.withValues(alpha: 0.1),
+          child: SizedBox(
+            width: math.max<double>(hexSize + 12, 40),
+            height: math.max<double>(hexSize + 12, 40),
+            child: AnimatedBuilder(
+              animation: _burst,
+              builder: (context, child) {
+                return Stack(
+                  alignment: Alignment.center,
+                  clipBehavior: Clip.none,
+                  children: [
+                    if (_burst.isAnimating || _burst.value > 0)
+                      CustomPaint(
+                        size: Size(hexSize * 2.4, hexSize * 2.4),
+                        painter: _BurstPainter(
+                          progress: _ringGrowth.value,
+                          opacity: _ringFade.value,
+                          color: color,
+                        ),
+                      ),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 320),
+                      switchInCurve: Curves.easeOutBack,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) {
+                        return FadeTransition(
+                          opacity: animation,
+                          child: ScaleTransition(
+                            scale: animation,
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: Icon(
+                        widget.isLiked ? Icons.favorite : Icons.favorite_border,
+                        key: ValueKey<bool>(widget.isLiked),
+                        size: hexSize,
                         color: color,
                       ),
                     ),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 320),
-                    switchInCurve: Curves.easeOutBack,
-                    switchOutCurve: Curves.easeInCubic,
-                    transitionBuilder: (child, animation) {
-                      return FadeTransition(
-                        opacity: animation,
-                        child: ScaleTransition(
-                          scale: animation,
-                          child: child,
-                        ),
-                      );
-                    },
-                    child: Icon(
-                      widget.isLiked ? Icons.favorite : Icons.favorite_border,
-                      key: ValueKey<bool>(widget.isLiked),
-                      size: hexSize,
-                      color: color,
-                    ),
-                  ),
-                ],
-              );
-            },
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -798,152 +819,127 @@ class _BurstPainter extends CustomPainter {
   }
 }
 
-/// Current global rect of the on-screen player cover (desktop player bar or
-/// mobile mini player). Updated by [PlayerCoverRectReporter] — used as the
-/// landing spot for the cover fly-to-player animation.
-final ValueNotifier<Rect?> playerCoverRectNotifier = ValueNotifier<Rect?>(null);
+/// Shared application dialog shell: one shape, one title style and standard
+/// dismiss buttons for every standard AlertDialog-based dialog.
+///
+/// Anything non-standard (custom positioning, bare Dialog hosts like login or
+/// the account menu) stays on raw Dialog/AlertDialog deliberately.
+class AppDialog extends StatelessWidget {
+  /// Fully custom title (e.g. a row with a close button or tabs). Takes
+  /// precedence over [title]/[titleIcon].
+  final Widget? titleWidget;
 
-/// Wraps the player cover and keeps [playerCoverRectNotifier] in sync with its
-/// position/size so track covers in lists can "fly" toward it.
-class PlayerCoverRectReporter extends StatelessWidget {
-  const PlayerCoverRectReporter({required this.child, super.key});
+  /// Plain-text title, rendered bold in [titleStyle] unless overridden.
+  final String? title;
 
-  final Widget child;
+  /// Optional leading icon for the plain-text title row.
+  final IconData? titleIcon;
 
-  @override
-  Widget build(BuildContext context) {
-    final box = context.findRenderObject();
-    if (box is RenderBox && box.hasSize) {
-      playerCoverRectNotifier.value = box.localToGlobal(Offset.zero) & box.size;
-    }
-    return child;
-  }
-}
+  /// Style for the plain-text title. Defaults to bold onSurface.
+  final TextStyle? titleStyle;
 
-/// Animates a copy of a track cover from its current position to the player
-/// cover — the "hero" feel without hero widgets (sections switch via signals,
-/// not routes). No-op when either source or target is unavailable.
-void flyCoverToPlayer(
-  BuildContext context, {
-  required GlobalKey coverKey,
-  required String? coverUrl,
-  required double borderRadius,
-}) {
-  final target = playerCoverRectNotifier.value;
-  final fromContext = coverKey.currentContext;
-  if (target == null || coverUrl == null || fromContext == null) return;
-  final fromBox = fromContext.findRenderObject();
-  if (fromBox is! RenderBox || !fromBox.hasSize) return;
-  final source = fromBox.localToGlobal(Offset.zero) & fromBox.size;
-  if (source.isEmpty || target.isEmpty) return;
+  final Widget? content;
 
-  final overlay = Overlay.of(context, rootOverlay: true);
-  late final OverlayEntry entry;
-  entry = OverlayEntry(
-    builder: (_) => _FlyingCover(
-      source: source,
-      target: target,
-      coverUrl: coverUrl,
-      borderRadius: borderRadius,
-      onDone: () => entry.remove(),
-    ),
-  );
-  overlay.insert(entry);
-}
+  /// Constrains content width (replaces `SizedBox(width: ...)` wrappers).
+  final double? contentWidth;
 
-class _FlyingCover extends StatefulWidget {
-  final Rect source;
-  final Rect target;
-  final String coverUrl;
-  final double borderRadius;
-  final VoidCallback onDone;
+  final List<Widget>? actions;
 
-  const _FlyingCover({
-    required this.source,
-    required this.target,
-    required this.coverUrl,
-    required this.borderRadius,
-    required this.onDone,
+  final EdgeInsetsGeometry? titlePadding;
+  final EdgeInsetsGeometry? contentPadding;
+  final EdgeInsetsGeometry? actionsPadding;
+  final ShapeBorder? shape;
+  final Color? surfaceTintColor;
+  final bool scrollable;
+
+  const AppDialog({
+    super.key,
+    this.titleWidget,
+    this.title,
+    this.titleIcon,
+    this.titleStyle,
+    this.content,
+    this.contentWidth,
+    this.actions,
+    this.titlePadding,
+    this.contentPadding,
+    this.actionsPadding,
+    this.shape,
+    this.surfaceTintColor,
+    this.scrollable = false,
   });
 
-  @override
-  State<_FlyingCover> createState() => _FlyingCoverState();
-}
-
-class _FlyingCoverState extends State<_FlyingCover>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 480),
-  );
-  late final Animation<double> _t = CurvedAnimation(
-    parent: _controller,
-    curve: Curves.easeInOutCubic,
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_controller.forward().whenComplete(widget.onDone));
+  /// The app-wide dialog shape. Used automatically; exposed for the rare
+  /// dialog that needs the shape without the full shell.
+  static ShapeBorder shapeOf(BuildContext context) {
+    return RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(AppRadius.xxl),
+      side: BorderSide(
+        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.1),
+      ),
+    );
   }
 
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
+  /// Standard dismiss action with default button color.
+  static Widget cancelButton(BuildContext context, [String label = 'Отмена']) {
+    return TextButton(
+      onPressed: () => Navigator.pop(context),
+      child: Text(label),
+    );
+  }
+
+  /// Standard dismiss action in muted color.
+  static Widget closeButton(BuildContext context, [String label = 'Закрыть']) {
+    final cs = Theme.of(context).colorScheme;
+    return TextButton(
+      onPressed: () => Navigator.pop(context),
+      child: Text(label, style: TextStyle(color: cs.onSurfaceVariant)),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        AnimatedBuilder(
-          animation: _t,
-          builder: (context, _) {
-            final rect = Rect.lerp(
-              widget.source,
-              widget.target,
-              _t.value,
-            );
-            if (rect == null) return const SizedBox.shrink();
-            final radius = ui.lerpDouble(
-              widget.borderRadius,
-              AppRadius.sm,
-              _t.value,
-            );
-            return Positioned(
-              left: rect.left,
-              top: rect.top,
-              width: rect.width,
-              height: rect.height,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(radius ?? AppRadius.sm),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(
-                        alpha: 0.25 * (1 - _t.value),
+    final cs = Theme.of(context).colorScheme;
+    final titleText = title;
+
+    var effectiveTitle = titleWidget;
+    effectiveTitle ??= titleText != null
+        ? Row(
+            children: [
+              if (titleIcon != null) ...[
+                Icon(titleIcon, color: cs.onSurface),
+                const SizedBox(width: 12),
+              ],
+              Expanded(
+                child: Text(
+                  titleText,
+                  style:
+                      titleStyle ??
+                      TextStyle(
+                        color: cs.onSurface,
+                        fontWeight: FontWeight.bold,
                       ),
-                      blurRadius: 12,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(radius ?? AppRadius.sm),
-                  child: RustCachedImage(
-                    imageUrl: widget.coverUrl,
-                    width: rect.width,
-                    height: rect.height,
-                    errorWidget: const ColoredBox(color: Colors.black26),
-                  ),
                 ),
               ),
-            );
-          },
-        ),
-      ],
+            ],
+          )
+        : null;
+
+    var body = content;
+    if (body != null && contentWidth != null) {
+      body = SizedBox(width: contentWidth, child: body);
+    }
+
+    return AlertDialog(
+      shape: shape ?? shapeOf(context),
+      surfaceTintColor: surfaceTintColor,
+      titlePadding: titlePadding,
+      contentPadding: contentPadding,
+      actionsPadding: actionsPadding,
+      scrollable: scrollable,
+      title: effectiveTitle,
+      content: body,
+      actions: actions,
     );
   }
 }

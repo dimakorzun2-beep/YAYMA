@@ -2,16 +2,19 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/common_ui.dart';
 import 'package:yayma/src/rust/api/content.dart' as rust;
 import 'package:yayma/src/rust/api/models.dart';
 
-class TrackDetailsDialog extends SignalWidget {
+class TrackDetailsDialog extends StatefulWidget {
   final String trackId;
 
   const TrackDetailsDialog({required this.trackId, super.key});
+
+  @override
+  State<TrackDetailsDialog> createState() => _TrackDetailsDialogState();
 
   static void show(BuildContext context, String trackId) {
     unawaited(
@@ -21,19 +24,26 @@ class TrackDetailsDialog extends SignalWidget {
       ),
     );
   }
+}
+
+class _TrackDetailsDialogState extends State<TrackDetailsDialog> {
+  late final FutureSignal<TrackDetailsDto?> _detailsAsync;
+
+  @override
+  void initState() {
+    super.initState();
+    _detailsAsync = futureSignal(() async {
+      final ctx = appContextSignal.value;
+      if (ctx == null) return null;
+      return await rust.getTrackDetails(ctx: ctx, trackId: widget.trackId);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final detailsAsync = futureSignal(() async {
-      final ctx = appContextSignal.value;
-      if (ctx == null) return null;
-      return rust.getTrackDetails(ctx: ctx, trackId: trackId);
-    });
-
     return SignalBuilder(
       builder: (context) {
-        final result = detailsAsync.value;
+        final result = _detailsAsync.value;
         return result.map(
           loading: () => const Dialog(
             backgroundColor: Colors.transparent,
@@ -61,11 +71,8 @@ class TrackDetailsDialog extends SignalWidget {
 
   Widget _buildDialog(BuildContext context, Widget content) {
     final cs = Theme.of(context).colorScheme;
-    return AlertDialog(
-      title: Text(
-        'О треке',
-        style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.bold),
-      ),
+    return AppDialog(
+      title: 'О треке',
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 500),
         child: content,

@@ -5,10 +5,13 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:windows_taskbar/windows_taskbar.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/init.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
+import 'package:yayma/src/features/core/services/debouncer.dart';
+import 'package:yayma/src/features/core/services/rust_bridge.dart';
+import 'package:yayma/src/features/core/utils/lru_map.dart';
 import 'package:yayma/src/features/library/providers/library_provider.dart';
 import 'package:yayma/src/rust/api/audio_fx.dart' as rust;
 import 'package:yayma/src/rust/api/library.dart' as rust;
@@ -33,11 +36,59 @@ final FlutterSignal<AudioQuality> audioQualitySignal = signal<AudioQuality>(
 
 StreamSubscription<rust.AppEvent>? _eventSub;
 
-Future<void> initPlayback() async {
+/// Deduplicates concurrent [initPlayback] calls (login + auto-login racing).
+Future<void>? _initPlaybackFuture;
+
+Future<void> initPlayback() {
+  final ongoing = _initPlaybackFuture;
+  if (ongoing != null) return ongoing;
+  final future = _initPlaybackUnsafe();
+  _initPlaybackFuture = future;
+  unawaited(
+    future.then((_) {
+      if (identical(_initPlaybackFuture, future)) _initPlaybackFuture = null;
+    }, onError: (_) {
+      if (identical(_initPlaybackFuture, future)) _initPlaybackFuture = null;
+    }),
+  );
+  return future;
+}
+
+/// Explicit teardown for logout/app shutdown: cancels the Rust event stream
+/// and resets playback-owned signals to their initial values so a later
+/// [initPlayback] starts clean. Idempotent.
+Future<void> disposePlayback() async {
+  _initPlaybackFuture = null;
+  await _eventSub?.cancel();
+  _eventSub = null;
+
+  _bufferingDelayDebouncer.dispose();
+
+  playerStateSignal.value = null;
+  playerProgressSignal.value = null;
+  vibeTickSignal.value = F32Array26.init();
+  audioQualitySignal.value = AudioQuality.normal;
+  audioDevicesSignal.value = [];
+  selectedAudioDeviceSignal.value = null;
+  colorSchemeSignal.value = null;
+  showBufferingIndicatorSignal.value = false;
+  showLyricsSignal.value = false;
+  hideLyricsOverlaySignal.value = false;
+  lyricsSuppressDimSignal.value = false;
+  equalizerSignal.value = null;
+  audioEffectsSignal.value = [];
+
+  _preparedCoverSchemes.clear();
+  // In-flight preparations finish harmlessly; clearing drops the handles so
+  // stale futures are not held across login sessions.
+}
+
+Future<void> _initPlaybackUnsafe() async {
   final ctx = appContextSignal.value;
   if (ctx == null) return;
 
   await _eventSub?.cancel();
+  _eventSub = null;
 
   // Initialize app event stream
   _eventSub = rust.appEventStream(ctx: ctx).listen((event) {
@@ -62,7 +113,7 @@ Future<void> initPlayback() async {
             message.contains('Invalid token') ||
             message.contains('session expired') ||
             message.contains('401')) {
-          unawaited(logout());
+          unawaited(AppInit.logout());
         }
       case rust.AppEvent_TrackDownloadStarted(field0: final trackId):
         downloadingTracksSignal.value = {
@@ -70,17 +121,17 @@ Future<void> initPlayback() async {
           trackId,
         };
       case rust.AppEvent_TrackDownloadFinished(field0: final trackId):
-        final newSet = {...downloadingTracksSignal.value};
-        newSet.remove(trackId);
-        downloadingTracksSignal.value = newSet;
+        downloadingTracksSignal.value = {
+          ...downloadingTracksSignal.value,
+        }..remove(trackId);
         unawaited(refreshDownloadedTracks());
       case rust.AppEvent_TrackDownloadFailed(
         field0: final trackId,
         field1: final error,
       ):
-        final newSet = {...downloadingTracksSignal.value};
-        newSet.remove(trackId);
-        downloadingTracksSignal.value = newSet;
+        downloadingTracksSignal.value = {
+          ...downloadingTracksSignal.value,
+        }..remove(trackId);
         showAppError('Ошибка загрузки трека: $error');
       case _:
         break;
@@ -95,16 +146,12 @@ Future<void> initPlayback() async {
   _activateBufferingDelay();
   _activateLyricsOverlayReset();
   _activateWifiLock();
-  if (Platform.isWindows) {
-    _activateTaskbarEffect();
-  }
 }
 
 void _activatePersistentColorScheme() => _persistentColorSchemeEffect;
 void _activateAdjacentCoverPrecache() => _adjacentCoverPrecacheEffect;
 void _activateVibePalette() => _vibePaletteEffect;
 void _activateBufferingDelay() => _bufferingDelayEffect;
-void _activateTaskbarEffect() => _taskbarEffect;
 void _activateLyricsOverlayReset() => _lyricsOverlayResetEffect;
 void _activateWifiLock() => _wifiLockEffect;
 
@@ -128,9 +175,9 @@ final EffectCleanup _wifiLockEffect = effect(() {
       (state?.isBuffering ?? false) || (state?.isPlaying ?? false);
 
   if (shouldHold) {
-    _wifiLockChannel.invokeMethod('acquire').catchError((e) {});
+    unawaited(_wifiLockChannel.invokeMethod('acquire').catchError((e) {}));
   } else {
-    _wifiLockChannel.invokeMethod('release').catchError((e) {});
+    unawaited(_wifiLockChannel.invokeMethod('release').catchError((e) {}));
   }
 });
 
@@ -260,7 +307,7 @@ final FutureSignal<List<SimpleTrackDto>> queueTracksSignal = computedAsync(
     final _ = state.queueCount;
     final _ = state.isShuffled;
 
-    return rust.getQueue(ctx: ctx);
+    return await rust.getQueue(ctx: ctx);
   },
   options: const AsyncSignalOptions(name: 'queueTracksSignal'),
 );
@@ -307,78 +354,81 @@ final FlutterSignal<ColorScheme?> colorSchemeSignal = signal<ColorScheme?>(
 // Keep only the covers around the current queue position. Apart from avoiding
 // repeated palette extraction when going back, this lets the normal next-track
 // transition do its image work before the track actually changes.
+//
+// This second level next to Flutter's ImageCache is intentional: ImageCache
+// stores decoded images, not the derived ColorScheme palettes, and
+// ColorScheme.fromImageProvider is the expensive part worth memoizing.
+// In-flight extractions are deduplicated by caching the Future itself, so
+// concurrent readers share one palette computation (see [LruMap]).
 const int _preparedCoverCacheLimit = 6;
-final Map<String, ColorScheme> _preparedCoverSchemes = {};
-final Map<String, Future<ColorScheme?>> _preparingCoverSchemes = {};
-
-void _rememberCoverScheme(String url, ColorScheme scheme) {
-  _preparedCoverSchemes.remove(url);
-  _preparedCoverSchemes[url] = scheme;
-  while (_preparedCoverSchemes.length > _preparedCoverCacheLimit) {
-    _preparedCoverSchemes.remove(_preparedCoverSchemes.keys.first);
-  }
-}
+final LruMap<String, Future<ColorScheme?>> _preparedCoverSchemes = LruMap(
+  maximumSize: _preparedCoverCacheLimit,
+);
 
 Future<ColorScheme?> _prepareCoverScheme(String url) {
-  final ready = _preparedCoverSchemes[url];
-  if (ready != null) {
-    // Refresh its position in the small LRU cache.
-    _rememberCoverScheme(url, ready);
-    return Future.value(ready);
-  }
+  final cached = _preparedCoverSchemes[url];
+  if (cached != null) return cached;
 
-  final inFlight = _preparingCoverSchemes[url];
-  if (inFlight != null) return inFlight;
-
-  final future = () async {
-    try {
-      final ctx = appContextSignal.value;
-      if (ctx == null) return null;
-
-      final path = await rust.getCachedImagePath(ctx: ctx, url: url);
-      if (path == null) return null;
-
-      final file = File(path);
-      final paletteProvider = ResizeImage(
-        FileImage(file),
-        width: 32,
-        height: 32,
-      );
-      final scheme = await ColorScheme.fromImageProvider(
-        provider: paletteProvider,
-        brightness: Brightness.dark,
-      );
-      _rememberCoverScheme(url, scheme);
-
-      // Warm the exact decoded size used by BlurredCoverBackground. Resolving
-      // an ImageProvider is enough to put it into Flutter's shared image cache.
-      final backgroundProvider = ResizeImage(
-        FileImage(file),
-        width: 60,
-        height: 60,
-      );
-      final stream = backgroundProvider.resolve(ImageConfiguration.empty);
-      late final ImageStreamListener listener;
-      listener = ImageStreamListener(
-        (_, _) => stream.removeListener(listener),
-        onError: (_, _) => stream.removeListener(listener),
-      );
-      stream.addListener(listener);
-
-      return scheme;
-    } on Object catch (error) {
-      debugPrint('Cover preparation failed: $error');
-      return null;
-    }
-  }();
-
-  _preparingCoverSchemes[url] = future;
+  final future = _extractCoverScheme(url);
+  _preparedCoverSchemes[url] = future;
+  // Don't poison the cache with misses or errors: null results and failures
+  // are evicted so the next request retries instead of reusing the failure.
+  // The identity check guards against evicting a fresher entry inserted
+  // for the same url.
   unawaited(
-    future.then((_) {
-      unawaited(_preparingCoverSchemes.remove(url));
+    future.then((scheme) {
+      if (scheme == null &&
+          identical(_preparedCoverSchemes.peek(url), future)) {
+        final _ = _preparedCoverSchemes.remove(url);
+      }
+    }, onError: (_) {
+      if (identical(_preparedCoverSchemes.peek(url), future)) {
+        final _ = _preparedCoverSchemes.remove(url);
+      }
     }),
   );
   return future;
+}
+
+Future<ColorScheme?> _extractCoverScheme(String url) async {
+  try {
+    final ctx = appContextSignal.value;
+    if (ctx == null) return null;
+
+    final path = await rust.getCachedImagePath(ctx: ctx, url: url);
+    if (path == null) return null;
+
+    final file = File(path);
+    final paletteProvider = ResizeImage(
+      FileImage(file),
+      width: 32,
+      height: 32,
+    );
+    final scheme = await ColorScheme.fromImageProvider(
+      provider: paletteProvider,
+      brightness: Brightness.dark,
+    );
+
+    // Warm the exact decoded size used by BlurredCoverBackground. Resolving
+    // an ImageProvider is enough to put it into Flutter's shared image cache.
+    final backgroundProvider = ResizeImage(
+      FileImage(file),
+      width: 60,
+      height: 60,
+    );
+    final stream = backgroundProvider.resolve(ImageConfiguration.empty);
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener(
+      (_, _) => stream.removeListener(listener),
+      onError: (_, _) => stream.removeListener(listener),
+    );
+    stream.addListener(listener);
+
+    return scheme;
+  } on Object catch (error) {
+    debugPrint('Cover preparation failed: $error');
+    return null;
+  }
 }
 
 // Effect to update the scheme, normally from the already prepared queue entry.
@@ -387,13 +437,6 @@ final EffectCleanup _persistentColorSchemeEffect = effect(() {
 
   if (url == null || appContextSignal.value == null) {
     colorSchemeSignal.value = null;
-    return;
-  }
-
-  final ready = _preparedCoverSchemes[url];
-  if (ready != null) {
-    _rememberCoverScheme(url, ready);
-    colorSchemeSignal.value = ready;
     return;
   }
 
@@ -465,138 +508,27 @@ final EffectCleanup _vibePaletteEffect = effect(() {
 
 // Buffering indicator that only shows once the track has been stalled > 3s,
 // to avoid flickering on short buffering hiccups.
-Timer? _bufferingDelayTimer;
+final Debouncer _bufferingDelayDebouncer = Debouncer();
 final FlutterSignal<bool> showBufferingIndicatorSignal = signal(false);
 final EffectCleanup _bufferingDelayEffect = effect(() {
   final state = playerStateSignal();
   final stalled = state != null && !state.isPlaying && state.isBuffering;
 
   if (!stalled) {
-    _bufferingDelayTimer?.cancel();
-    _bufferingDelayTimer = null;
+    _bufferingDelayDebouncer.cancel();
     showBufferingIndicatorSignal.value = false;
     return;
   }
 
-  _bufferingDelayTimer ??= Timer(const Duration(seconds: 3), () {
-    _bufferingDelayTimer = null;
+  _bufferingDelayDebouncer.runOnce(() {
     showBufferingIndicatorSignal.value = true;
-  });
+  }, const Duration(seconds: 3));
 });
 
-// Cache last state to avoid redundant system calls
-String? _lastTaskbarTrackId;
-bool? _lastTaskbarIsPlaying;
-bool? _lastTaskbarIsLiked;
-bool? _lastTaskbarIsDisliked;
-bool? _lastTaskbarIsShuffled;
-RepeatModeDto? _lastTaskbarRepeatMode;
-
-// Windows taskbar thumbnail buttons update
-final EffectCleanup _taskbarEffect = effect(() {
-  if (!Platform.isWindows) return;
-
-  final meta = trackMetadataSignal();
-  final isPlaying = isPlayingSignal();
-  final isLiked = isLikedSignal();
-  final isDisliked = isDislikedSignal();
-  final isShuffled = isShuffledSignal();
-  final repeatMode = repeatModeSignal();
-
-  // Update only if track or key status changed
-  if (_lastTaskbarTrackId == meta.id &&
-      _lastTaskbarIsPlaying == isPlaying &&
-      _lastTaskbarIsLiked == isLiked &&
-      _lastTaskbarIsDisliked == isDisliked &&
-      _lastTaskbarIsShuffled == isShuffled &&
-      _lastTaskbarRepeatMode == repeatMode) {
-    return;
-  }
-
-  _lastTaskbarTrackId = meta.id;
-  _lastTaskbarIsPlaying = isPlaying;
-  _lastTaskbarIsLiked = isLiked;
-  _lastTaskbarIsDisliked = isDisliked;
-  _lastTaskbarIsShuffled = isShuffled;
-  _lastTaskbarRepeatMode = repeatMode;
-
-  unawaited(() async {
-    try {
-      await WindowsTaskbar.setThumbnailToolbar([
-        ThumbnailToolbarButton(
-          ThumbnailToolbarAssetIcon(
-            isShuffled
-                ? 'assets/icons/shuffle_on.ico'
-                : 'assets/icons/shuffle.ico',
-          ),
-          isShuffled ? 'Выключить перемешивание' : 'Включить перемешивание',
-          () => unawaited(PlaybackController.toggleShuffle()),
-        ),
-        ThumbnailToolbarButton(
-          ThumbnailToolbarAssetIcon(
-            isDisliked
-                ? 'assets/icons/disliked.ico'
-                : 'assets/icons/dislike.ico',
-          ),
-          isDisliked ? 'Убрать дизлайк' : 'Дизлайк',
-          () {
-            if (meta.id != null) {
-              unawaited(PlaybackController.toggleDislike(trackId: meta.id!));
-            }
-          },
-        ),
-        ThumbnailToolbarButton(
-          ThumbnailToolbarAssetIcon('assets/icons/skip_previous.ico'),
-          'Назад',
-          () => unawaited(PlaybackController.prev()),
-        ),
-        ThumbnailToolbarButton(
-          ThumbnailToolbarAssetIcon(
-            isPlaying ? 'assets/icons/pause.ico' : 'assets/icons/play.ico',
-          ),
-          isPlaying ? 'Пауза' : 'Играть',
-          () => unawaited(PlaybackController.togglePlay()),
-        ),
-        ThumbnailToolbarButton(
-          ThumbnailToolbarAssetIcon('assets/icons/skip_next.ico'),
-          'Вперед',
-          () => unawaited(PlaybackController.next()),
-        ),
-        ThumbnailToolbarButton(
-          ThumbnailToolbarAssetIcon(
-            isLiked ? 'assets/icons/liked.ico' : 'assets/icons/like.ico',
-          ),
-          isLiked ? 'Убрать лайк' : 'Лайк',
-          () {
-            if (meta.id != null) {
-              unawaited(PlaybackController.toggleLike(trackId: meta.id!));
-            }
-          },
-        ),
-        ThumbnailToolbarButton(
-          ThumbnailToolbarAssetIcon(
-            repeatMode == RepeatModeDto.none
-                ? 'assets/icons/repeat.ico'
-                : (repeatMode == RepeatModeDto.single
-                      ? 'assets/icons/repeat_one.ico'
-                      : 'assets/icons/repeat_on.ico'),
-          ),
-          'Повтор',
-          () => unawaited(PlaybackController.toggleRepeat()),
-        ),
-      ]);
-
-      final artistStr = meta.artists.map((a) => a.name).join(', ');
-      var title = meta.title;
-      if (artistStr.isNotEmpty) {
-        title = '$artistStr - $title';
-      }
-      await WindowsTaskbar.setThumbnailTooltip(title);
-    } on Exception catch (_) {
-      // Ignore errors if window is temporarily unavailable
-    }
-  }());
-});
+// Windows taskbar thumbnail toolbar is handled natively in Rust
+// (src/rust/src/audio/taskbar.rs): button state is derived from audio signals
+// there, and WM_COMMAND actions go straight to the audio actor / library
+// logic without crossing the FFI boundary.
 
 // Track position from progress
 final FlutterComputed<double> playerPositionMsSignal = computed(
@@ -694,9 +626,22 @@ class PlaybackController {
   static Future<void> changeTransientVolumeGain(int gain) => runRustAction(
     (ctx) => rust.setTransientVolumeGain(ctx: ctx, gain: gain),
   );
-  static Future<void> seekTo(Duration duration) => runRustAction(
-    (ctx) => rust.seek(ctx: ctx, positionMs: duration.inMilliseconds),
-  );
+  static Future<void> seekTo(Duration duration) {
+    // Optimistic update so the timeline stays at the new position even while
+    // paused (progress events only tick during playback, and the seek echo
+    // from Rust may take a moment to arrive).
+    final current = playerProgressSignal.peek();
+    if (current != null) {
+      final pos = duration.inMilliseconds.clamp(0, current.durationMs);
+      playerProgressSignal.value = PlaybackProgressDto(
+        positionMs: pos,
+        durationMs: current.durationMs,
+      );
+    }
+    return runRustAction(
+      (ctx) => rust.seek(ctx: ctx, positionMs: duration.inMilliseconds),
+    );
+  }
 
   static Future<void> setQuality(AudioQuality quality) =>
       runRustAction((ctx) async {

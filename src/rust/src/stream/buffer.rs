@@ -103,7 +103,7 @@ impl BufferState {
             .unwrap_or(0)
     }
 
-    pub fn read_at(&mut self, pos: u64, buf: &mut [u8]) -> usize {
+    pub fn read_at(&self, pos: u64, buf: &mut [u8]) -> usize {
         self.segments
             .iter()
             .find(|s| s.contains(pos))
@@ -311,21 +311,41 @@ impl BufferState {
                 }
             }
         }
+        self.recompute_max_buffered();
     }
 
     pub fn clear(&mut self, start: u64) {
         self.pending = None;
         self.eof = false;
-        if start <= self.max_buffered_from_start {
-            self.buffering_base = start;
-            self.max_buffered_from_start = start;
-        }
+        // Always rebase: after a far forward seek past buffered data the old
+        // base would make enforce_buffer_limit evict the fresh segment.
+        self.buffering_base = start;
+        self.max_buffered_from_start = self.max_buffered_from_start.max(start);
+        self.recompute_max_buffered();
     }
 
     pub fn discard_before(&mut self, pos: u64) {
         let keep_history = 256 * 1024;
         let safe_pos = pos.saturating_sub(keep_history);
         self.buffering_base = self.buffering_base.max(pos);
+
+        // Drop fully consumed segments, keeping at most one for seek-back history.
+        let first_live = self
+            .segments
+            .iter()
+            .position(|s| s.end_pos() > safe_pos);
+        match first_live {
+            Some(idx) if idx > 1 => {
+                self.segments.drain(0..idx - 1);
+            }
+            Some(_) => {}
+            None => {
+                if self.segments.len() > 1 {
+                    let last = self.segments.len() - 1;
+                    self.segments.drain(0..last);
+                }
+            }
+        }
 
         for seg in &mut self.segments {
             if seg.start_pos < safe_pos && seg.end_pos() > safe_pos {
@@ -383,5 +403,92 @@ impl BufferState {
 
     pub fn clear_pending(&mut self) {
         self.pending = None;
+    }
+
+    #[cfg(test)]
+    fn segment_count(&self) -> usize {
+        self.segments.len()
+    }
+
+    fn recompute_max_buffered(&mut self) {
+        let base = self.buffering_base;
+        let mut best = base;
+        for s in &self.segments {
+            if s.contains(base) || s.start_pos == base {
+                best = best.max(s.end_pos());
+            }
+        }
+        // best == base means no live segment at base: clamp stale max down.
+        self.max_buffered_from_start = best;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bytes(n: usize) -> Bytes {
+        Bytes::from(vec![0xABu8; n])
+    }
+
+    #[test]
+    fn contiguous_appends_merge_into_one_segment() {
+        let mut b = BufferState::new(10_000, 8 * 1024 * 1024, 256 * 1024);
+        assert!(b.append(bytes(100), 0));
+        assert!(b.append(bytes(100), 100));
+        assert_eq!(b.segment_count(), 1);
+        assert_eq!(b.available_from(0), 200);
+        let mut out = [0u8; 200];
+        assert_eq!(b.read_at(0, &mut out), 200);
+        assert!(out.iter().all(|&x| x == 0xAB));
+    }
+
+    #[test]
+    fn overlapping_append_does_not_duplicate() {
+        let mut b = BufferState::new(10_000, 8 * 1024 * 1024, 256 * 1024);
+        assert!(b.append(bytes(100), 0));
+        assert!(b.append(bytes(100), 50));
+        assert_eq!(b.available_from(0), 150);
+    }
+
+    #[test]
+    fn clear_rebases_after_far_forward_seek() {
+        let mut b = BufferState::new(10_000_000, 1024 * 1024, 256 * 1024);
+        assert!(b.append(bytes(1024), 0));
+        // Seek far past buffered data: base must move, or the fresh segment
+        // would be evicted as "far" by enforce_buffer_limit.
+        b.clear(5_000_000);
+        assert!(b.append(bytes(1024), 5_000_000));
+        assert!(b.contains(5_000_000));
+        assert_eq!(b.max_buffered_from_start(), 5_000_000 + 1024);
+    }
+
+    #[test]
+    fn discard_before_drops_consumed_segments() {
+        let mut b = BufferState::new(4 * 1024 * 1024, 32 * 1024 * 1024, 256 * 1024);
+        for i in 0..8 {
+            assert!(b.append(bytes(256 * 1024), i * 256 * 1024));
+        }
+        b.discard_before(900 * 1024);
+        // Fully consumed head is gone (one segment kept for seek-back history).
+        assert!(!b.contains(100 * 1024));
+        // Recent data within history window survives.
+        assert!(b.contains(700 * 1024));
+    }
+
+    #[test]
+    fn eviction_clamps_reported_buffered_bytes() {
+        let mut b = BufferState::new(10 * 1024 * 1024, 1024 * 1024, 256 * 1024);
+        assert!(b.append(bytes(1024 * 1024), 0));
+        assert!(b.append(bytes(1024 * 1024), 1024 * 1024));
+        // 2MB buffered with a 1MB cap: tail must be trimmed and the reported
+        // max must not count evicted bytes.
+        assert_eq!(b.max_buffered_from_start(), 1024 * 1024);
+    }
+
+    #[test]
+    fn empty_append_is_rejected() {
+        let mut b = BufferState::new(10_000, 8 * 1024 * 1024, 256 * 1024);
+        assert!(!b.append(Bytes::new(), 0));
     }
 }

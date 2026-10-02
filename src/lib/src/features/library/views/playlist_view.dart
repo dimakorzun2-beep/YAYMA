@@ -5,15 +5,15 @@ import 'package:file_picker/file_picker.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/app_context_menu.dart';
+import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
 import 'package:yayma/src/features/core/views/widgets/common_ui.dart';
 import 'package:yayma/src/features/core/views/widgets/download_menu.dart';
 import 'package:yayma/src/features/core/views/widgets/responsive.dart';
-import 'package:yayma/src/features/core/views/widgets/track_elements.dart';
 import 'package:yayma/src/features/core/views/widgets/track_tile.dart';
 import 'package:yayma/src/features/library/providers/library_provider.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
@@ -421,7 +421,7 @@ class _PlaylistContentState extends State<_PlaylistContent> {
             ),
           )
         else if (searchActive)
-          SliverM3ECardList(
+          SliverM3ESegmentedList(
             haptic: M3EHapticFeedback.light,
             itemCount: _localTracks.length,
             color: Colors.transparent,
@@ -500,47 +500,45 @@ class _PlaylistContentState extends State<_PlaylistContent> {
     PlaylistDetailsDto playlist,
   ) async {
     final controller = TextEditingController(text: playlist.title);
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        final cs = Theme.of(context).colorScheme;
-        return AlertDialog(
-          title: Text(
-            'Переименовать плейлист',
-            style: TextStyle(color: cs.onSurface),
-          ),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            style: TextStyle(color: cs.onSurface),
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: cs.onSurface.withValues(alpha: 0.05),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppRadius.sm),
-                borderSide: BorderSide.none,
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          final cs = Theme.of(context).colorScheme;
+          return AppDialog(
+            title: 'Переименовать плейлист',
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              style: TextStyle(color: cs.onSurface),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: cs.onSurface.withValues(alpha: 0.05),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  borderSide: BorderSide.none,
+                ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Отмена'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (controller.text.isNotEmpty) {
-                  await renamePlaylistAction(playlist.kind, controller.text);
-                  widget.refresh();
-                  if (context.mounted) Navigator.pop(context);
-                }
-              },
-              child: const Text('Сохранить'),
-            ),
-          ],
-        );
-      },
-    );
+            actions: [
+              AppDialog.cancelButton(context),
+              ElevatedButton(
+                onPressed: () async {
+                  if (controller.text.isNotEmpty) {
+                    await renamePlaylistAction(playlist.kind, controller.text);
+                    widget.refresh();
+                    if (context.mounted) Navigator.pop(context);
+                  }
+                },
+                child: const Text('Сохранить'),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      controller.dispose();
+    }
   }
 
   Future<void> _showDeleteConfirm(
@@ -551,20 +549,14 @@ class _PlaylistContentState extends State<_PlaylistContent> {
       context: context,
       builder: (context) {
         final cs = Theme.of(context).colorScheme;
-        return AlertDialog(
-          title: Text(
-            'Удалить плейлист?',
-            style: TextStyle(color: cs.onSurface),
-          ),
+        return AppDialog(
+          title: 'Удалить плейлист?',
           content: Text(
             "Вы уверены, что хотите удалить '${playlist.title}'? Это действие нельзя отменить.",
             style: TextStyle(color: cs.onSurfaceVariant),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Отмена'),
-            ),
+            AppDialog.cancelButton(context),
             ElevatedButton(
               onPressed: () async {
                 await deletePlaylistAction(playlist.kind);
@@ -623,7 +615,7 @@ class _TrackTile extends StatelessWidget {
         child: Row(
           children: [
             dragHandle,
-            TrackCover(url: track.coverUrl),
+            AppCover(coverUrl: track.coverUrl),
           ],
         ),
       ),

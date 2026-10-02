@@ -2,10 +2,11 @@ import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
+import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
 import 'package:yayma/src/features/core/views/widgets/common_ui.dart';
+import 'package:yayma/src/features/core/views/widgets/horizontal_shelf.dart';
 import 'package:yayma/src/features/core/views/widgets/media_card.dart';
 import 'package:yayma/src/features/core/views/widgets/responsive.dart';
-import 'package:yayma/src/features/core/views/widgets/track_elements.dart';
 import 'package:yayma/src/features/core/views/widgets/track_tile.dart';
 import 'package:yayma/src/features/library/views/add_to_playlist_dialog.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
@@ -180,40 +181,34 @@ class _SearchResults extends StatelessWidget {
         if (results.artists.isNotEmpty) ...[
           const SliverToBoxAdapter(child: CommonSectionTitle(title: 'Артисты')),
           SliverToBoxAdapter(
-            child: SizedBox(
+            child: HorizontalShelf(
               height: 180,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                ), // 32 + 8 (internal card padding) = 40
-                itemCount: results.artists.length,
-                itemBuilder: (context, i) =>
-                    _ArtistSearchCard(artist: results.artists[i]),
-              ),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 32,
+              ), // 32 + 8 (internal card padding) = 40
+              itemCount: results.artists.length,
+              itemBuilder: (context, i) =>
+                  _ArtistSearchCard(artist: results.artists[i]),
             ),
           ),
         ],
         if (results.albums.isNotEmpty) ...[
           const SliverToBoxAdapter(child: CommonSectionTitle(title: 'Альбомы')),
           SliverToBoxAdapter(
-            child: SizedBox(
+            child: HorizontalShelf(
               height: 240,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                ), // 32 + 8 = 40
-                itemCount: results.albums.length,
-                itemBuilder: (context, i) =>
-                    _AlbumSearchCard(album: results.albums[i]),
-              ),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 32,
+              ), // 32 + 8 = 40
+              itemCount: results.albums.length,
+              itemBuilder: (context, i) =>
+                  _AlbumSearchCard(album: results.albums[i]),
             ),
           ),
         ],
         if (results.tracks.isNotEmpty) ...[
           const SliverToBoxAdapter(child: CommonSectionTitle(title: 'Треки')),
-          SliverM3ECardList(
+          SliverM3ESegmentedList(
             haptic: M3EHapticFeedback.light,
             itemCount: results.tracks.length,
             color: Colors.transparent,
@@ -245,7 +240,7 @@ class _TrackSearchTile extends StatelessWidget {
       version: track.version,
       artists: track.artists,
       albumId: track.albumId,
-      leading: TrackCover(url: track.coverUrl),
+      leading: AppCover(coverUrl: track.coverUrl),
       trailing: Text(
         formatDuration(track.durationMs),
         style: TextStyle(

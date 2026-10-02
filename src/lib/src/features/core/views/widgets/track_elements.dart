@@ -1,11 +1,8 @@
-import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
-import 'package:yayma/src/features/core/views/widgets/fullscreen_cover.dart';
-import 'package:yayma/src/features/core/views/widgets/rust_cached_image.dart';
 import 'package:yayma/src/rust/api/models.dart';
 
 class TrackVersionWidget extends StatelessWidget {
@@ -36,6 +33,9 @@ class TrackVersionWidget extends StatelessWidget {
           fontSize: fontSize,
           fontWeight: FontWeight.w400,
         ),
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
       ),
     );
   }
@@ -184,113 +184,103 @@ class _SingleArtistNameState extends State<_SingleArtistName> {
   }
 }
 
-class TrackCover extends StatelessWidget {
-  final String? url;
-  final double size;
-  final double borderRadius;
-  final bool isCircle;
-  final bool canExpand;
-  final String? heroTag;
-  final Shapes? shape;
+class TrackPlayingIndicator extends StatefulWidget {
+  final bool isPlaying;
+  final double height;
+  final Color? color;
 
-  const TrackCover({
-    required this.url,
+  const TrackPlayingIndicator({
+    required this.isPlaying,
     super.key,
-    this.size = 64,
-    this.borderRadius = 8,
-    this.isCircle = false,
-    this.canExpand = false,
-    this.heroTag,
-    this.shape,
+    this.height = 16,
+    this.color,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
-    final targetPx = (size * pixelRatio).round();
-    final resolvedUrl = url != null ? resolveCoverUrl(url!, targetPx) : null;
-    final image = resolvedUrl != null
-        ? RustCachedImage(
-            imageUrl: resolvedUrl,
-            width: size,
-            height: size,
-            cacheWidth: targetPx,
-            cacheHeight: targetPx,
-            errorWidget: _CoverPlaceholder(isCircle: isCircle, size: size),
-          )
-        : _CoverPlaceholder(isCircle: isCircle, size: size);
-
-    final Widget content;
-    final placeholderColor = Theme.of(
-      context,
-    ).colorScheme.onSurface.withValues(alpha: 0.1);
-    if (shape != null && !isCircle) {
-      content = M3EContainer(
-        shape!,
-        width: size,
-        height: size,
-        color: placeholderColor,
-        child: image,
-      );
-    } else {
-      content = Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          color: placeholderColor,
-          borderRadius: isCircle ? null : BorderRadius.circular(borderRadius),
-          shape: isCircle ? BoxShape.circle : BoxShape.rectangle,
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(
-            isCircle ? size / 2 : borderRadius,
-          ),
-          child: image,
-        ),
-      );
-    }
-
-    var cover = content;
-
-    if (heroTag != null && url != null) {
-      cover = Hero(
-        tag: heroTag!,
-        child: cover,
-      );
-    }
-
-    if (canExpand && url != null) {
-      cover = MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: () => unawaited(
-            FullscreenCoverDialog.show(
-              context,
-              url!,
-              heroTag: heroTag ?? url!,
-            ),
-          ),
-          child: cover,
-        ),
-      );
-    }
-
-    return cover;
-  }
+  State<TrackPlayingIndicator> createState() => _TrackPlayingIndicatorState();
 }
 
-class _CoverPlaceholder extends StatelessWidget {
-  final bool isCircle;
-  final double size;
+class _TrackPlayingIndicatorState extends State<TrackPlayingIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
 
-  const _CoverPlaceholder({required this.isCircle, required this.size});
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    );
+    if (widget.isPlaying) _controller.repeat();
+  }
+
+  @override
+  void didUpdateWidget(TrackPlayingIndicator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isPlaying && !_controller.isAnimating) {
+      _controller.repeat();
+    } else if (!widget.isPlaying && _controller.isAnimating) {
+      _controller.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Icon(
-      isCircle ? Icons.person : Icons.music_note,
-      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.24),
-      size: size * 0.5,
+    final color = widget.color ?? Theme.of(context).colorScheme.primary;
+    if (!widget.isPlaying) {
+      // Paused: static bars at minimum height, fixed size.
+      return SizedBox(
+        height: widget.height,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: List.generate(
+            3,
+            (i) => Container(
+              width: 3,
+              height: i == 1 ? widget.height * 0.5 : widget.height * 0.3,
+              margin: EdgeInsets.only(left: i == 0 ? 0 : 2),
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      height: widget.height,
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, _) {
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: List.generate(3, (i) {
+              // Smooth calm wave: small amplitude, sine curve,
+              // slight phase offset between bars.
+              final phase = _controller.value * 2 * math.pi + i * 1.4;
+              final scale = 0.55 + 0.2 * math.sin(phase);
+              return Container(
+                width: 3,
+                height: widget.height * scale.clamp(0.35, 0.75),
+                margin: EdgeInsets.only(left: i == 0 ? 0 : 2),
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              );
+            }),
+          );
+        },
+      ),
     );
   }
 }

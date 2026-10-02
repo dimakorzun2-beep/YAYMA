@@ -1,8 +1,9 @@
 import 'dart:async';
 
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
-import 'package:yayma/src/features/playback/providers/playback_provider.dart';
+import 'package:yayma/src/app/session.dart';
+import 'package:yayma/src/features/core/services/debouncer.dart';
+import 'package:yayma/src/features/core/services/rust_bridge.dart';
 import 'package:yayma/src/rust/api/content.dart';
 import 'package:yayma/src/rust/api/library.dart';
 import 'package:yayma/src/rust/api/models.dart';
@@ -25,13 +26,29 @@ final FlutterSignal<Set<String>> downloadingTracksSignal = signal<Set<String>>(
 );
 
 StreamSubscription<List<SimpleTrackDto>>? _likedSub;
-Timer? _librarySearchDebounce;
+final Debouncer _librarySearchDebouncer = Debouncer();
 
 Future<void> initLibrary() async {
   // Load only playlists as they are lightweight and might be needed for navigation
   await refreshPlaylists();
   await refreshDownloadedTracks();
   // Liked tracks are loaded on demand when the library screen is opened
+}
+
+Future<void> disposeLibrary() async {
+  _librarySearchDebouncer.dispose();
+  final sub = _likedSub;
+  _likedSub = null;
+  await sub?.cancel();
+  likedTracksSignal.value = [];
+  playlistsSignal.value = [];
+  likedAlbumsSignal.value = [];
+  likedArtistsSignal.value = [];
+  isLibraryLoadingSignal.value = false;
+  librarySearchQuerySignal.value = '';
+  downloadedTracksSignal.value = {};
+  downloadingTracksSignal.value = {};
+  isDownloadingAllLikedTracksSignal.value = false;
 }
 
 Future<void> refreshDownloadedTracks() async {
@@ -78,6 +95,62 @@ Future<bool> removeLikedAlbumAction(String albumId) async {
 
   final success = await runRustAction(
     (ctx) => removeLikedAlbum(ctx: ctx, albumId: id),
+  );
+  return success;
+}
+
+Future<bool> addLikedArtistAction(String artistId) async {
+  if (artistId.isEmpty) return false;
+
+  final success = await runRustAction(
+    (ctx) => addLikedArtist(ctx: ctx, artistId: artistId),
+  );
+  return success;
+}
+
+Future<bool> removeLikedArtistAction(String artistId) async {
+  if (artistId.isEmpty) return false;
+
+  final success = await runRustAction(
+    (ctx) => removeLikedArtist(ctx: ctx, artistId: artistId),
+  );
+  return success;
+}
+
+Future<bool> addDislikedArtistAction(String artistId) async {
+  if (artistId.isEmpty) return false;
+
+  final success = await runRustAction(
+    (ctx) => addDislikedArtist(ctx: ctx, artistId: artistId),
+  );
+  return success;
+}
+
+Future<bool> removeDislikedArtistAction(String artistId) async {
+  if (artistId.isEmpty) return false;
+
+  final success = await runRustAction(
+    (ctx) => removeDislikedArtist(ctx: ctx, artistId: artistId),
+  );
+  return success;
+}
+
+Future<bool> addLikedPlaylistAction(String ownerUid, int kind) async {
+  final uid = BigInt.tryParse(ownerUid);
+  if (uid == null) return false;
+
+  final success = await runRustAction(
+    (ctx) => addLikedPlaylist(ctx: ctx, ownerUid: uid, kind: kind),
+  );
+  return success;
+}
+
+Future<bool> removeLikedPlaylistAction(String ownerUid, int kind) async {
+  final uid = BigInt.tryParse(ownerUid);
+  if (uid == null) return false;
+
+  final success = await runRustAction(
+    (ctx) => removeLikedPlaylist(ctx: ctx, ownerUid: uid, kind: kind),
   );
   return success;
 }
@@ -160,7 +233,7 @@ void setLibrarySearchQuery(String query) {
   final trimmedQuery = query.trim();
   librarySearchQuerySignal.value = trimmedQuery;
 
-  _librarySearchDebounce?.cancel();
+  _librarySearchDebouncer.cancel();
 
   if (trimmedQuery.isEmpty) {
     // Immediately reset search and request the full list
@@ -168,47 +241,47 @@ void setLibrarySearchQuery(String query) {
     return;
   }
 
-  _librarySearchDebounce = Timer(const Duration(milliseconds: 300), () {
+  _librarySearchDebouncer.run(() {
     // Check if the query changed while waiting
     if (librarySearchQuerySignal.value == trimmedQuery) {
       unawaited(refreshLikedTracks(query: trimmedQuery, force: true));
     }
-  });
-}
-
-Future<void> playTrackById(String trackId) async {
-  await PlaybackController.playTrack(trackId);
-}
-
-Future<void> playLikedTrackById(String trackId) async {
-  await PlaybackController.playLikedTrack(trackId);
+  }, const Duration(milliseconds: 300));
 }
 
 Future<bool> addTrackToPlaylistAction(
   int kind,
   String trackId,
   String? albumId,
-) => runRustAction(
-  (ctx) => addTrackToPlaylist(
-    ctx: ctx,
-    kind: kind,
-    trackId: trackId,
-    albumId: albumId,
-  ),
-);
+) async {
+  final success = await runRustAction(
+    (ctx) => addTrackToPlaylist(
+      ctx: ctx,
+      kind: kind,
+      trackId: trackId,
+      albumId: albumId,
+    ),
+  );
+  if (success) await refreshPlaylists();
+  return success;
+}
 
 Future<bool> removeTrackFromPlaylistAction(
   int kind,
   String trackId,
   String? albumId,
-) => runRustAction(
-  (ctx) => removeTrackFromPlaylist(
-    ctx: ctx,
-    kind: kind,
-    trackId: trackId,
-    albumId: albumId,
-  ),
-);
+) async {
+  final success = await runRustAction(
+    (ctx) => removeTrackFromPlaylist(
+      ctx: ctx,
+      kind: kind,
+      trackId: trackId,
+      albumId: albumId,
+    ),
+  );
+  if (success) await refreshPlaylists();
+  return success;
+}
 
 Future<bool> moveTrackInPlaylistAction(
   int kind,
@@ -216,16 +289,20 @@ Future<bool> moveTrackInPlaylistAction(
   int toIndex,
   String trackId,
   String? albumId,
-) => runRustAction(
-  (ctx) => moveTrackInPlaylist(
-    ctx: ctx,
-    kind: kind,
-    fromIndex: fromIndex,
-    toIndex: toIndex,
-    trackId: trackId,
-    albumId: albumId ?? '',
-  ),
-);
+) async {
+  final success = await runRustAction(
+    (ctx) => moveTrackInPlaylist(
+      ctx: ctx,
+      kind: kind,
+      fromIndex: fromIndex,
+      toIndex: toIndex,
+      trackId: trackId,
+      albumId: albumId ?? '',
+    ),
+  );
+  if (success) await refreshPlaylists();
+  return success;
+}
 
 Future<bool> createPlaylistAction(
   String title, {
@@ -319,7 +396,7 @@ Future<List<String>> downloadCollectionToFilesAction(
   final ctx = appContextSignal.value;
   if (ctx == null || tracks.isEmpty) return const [];
 
-  return downloadTracks(
+  return await downloadTracks(
     ctx: ctx,
     trackIds: tracks.map((track) => track.id).toList(),
     toCache: false,

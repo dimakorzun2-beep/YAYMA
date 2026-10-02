@@ -9,7 +9,8 @@ import 'package:signals_flutter/signals_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_all/webview_all.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/init.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/views/layout.dart';
 import 'package:yayma/src/features/settings/services/update_service.dart';
@@ -66,7 +67,7 @@ class _RootScreenState extends State<RootScreen> {
                               UpdateDialog.show(context, initialInfo: info);
                             }
                           }
-                        } catch (e) {
+                        } on Object catch (e) {
                           debugPrint('Error checking for updates: $e');
                         }
                       }());
@@ -96,6 +97,12 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _tokenController = TextEditingController();
+
+  @override
+  void dispose() {
+    _tokenController.dispose();
+    super.dispose();
+  }
 
   void _showWebView() {
     if (Platform.isAndroid) {
@@ -155,7 +162,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     if (token.isNotEmpty && !token.startsWith('http')) {
-      unawaited(login(token));
+      unawaited(AppInit.login(token));
     }
   }
 
@@ -381,7 +388,7 @@ class _YandexLoginDialogState extends State<YandexLoginDialog> {
             }
           },
           onNavigationRequest: (request) async {
-            return _parseToken(request.url);
+            return await _parseToken(request.url);
           },
           onPageFinished: (url) async {
             unawaited(_parseToken(url));
@@ -398,6 +405,14 @@ class _YandexLoginDialogState extends State<YandexLoginDialog> {
         Uri.parse('https://passport.yandex.ru/pwl-yandex/auth/'),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    // WebViewController has no dispose in webview_all; flag pending
+    // navigation callbacks so they no-op after the dialog is gone.
+    _isFinalized = true;
+    super.dispose();
   }
 
   Future<NavigationDecision> _parseToken(String urlString) async {
@@ -439,7 +454,7 @@ class _YandexLoginDialogState extends State<YandexLoginDialog> {
   Future<void> _handleFoundToken(String token) async {
     if (_isFinalized) return;
     _isFinalized = true;
-    await login(token);
+    await AppInit.login(token);
 
     if (mounted) {
       Navigator.of(context).pop();
@@ -621,7 +636,7 @@ class _YandexDeviceLoginDialogState extends State<YandexDeviceLoginDialog> {
   Future<void> _handleFoundToken(String token) async {
     if (_isFinalized) return;
     _isFinalized = true;
-    await login(token);
+    await AppInit.login(token);
 
     if (mounted) {
       Navigator.of(context).pop();

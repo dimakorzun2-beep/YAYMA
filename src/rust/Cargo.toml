@@ -55,7 +55,7 @@ serde_json = "1.0.151"
 
 im = "15.1.0"
 arc-swap = "1.9.2"
-toasty = { version = "0.10", features = ["sqlite"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 
 parking_lot = "0.12.5"
@@ -67,17 +67,20 @@ regex = "1.13.1"
 quick-xml = "0.41.0"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 discord-rich-presence = "1.1.0"
-souvlaki = { git = "https://github.com/Sinono3/souvlaki", rev = "436a5aedd85a755ba119916ba4504fb866803797" }
+wayclip-global-hotkey = "0.7"
+souvlaki = { git = "https://github.com/Sinono3/souvlaki", rev = "93ff3d1" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
+    "Win32_UI_Controls",
     "Win32_System_Com",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
     "Win32_Graphics_Imaging",
     "Win32_Media_Audio",
 ] }
@@ -99,40 +102,10 @@ mimalloc = { version = "0.1.52" }
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
 
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = "thin"
 codegen-units = 1
 panic = "abort"
 debug = false
 debug-assertions = false
 strip = "symbols"
-
-[profile.release.package.yayma]
-opt-level = 3
-
-[profile.release.package.rodio]
-opt-level = 3
-
-[profile.release.package.symphonia]
-opt-level = 3
-
-[profile.release.package.symphonia-core]
-opt-level = 3
-
-[profile.release.package.symphonia-bundle-flac]
-opt-level = 3
-
-[profile.release.package.symphonia-bundle-mp3]
-opt-level = 3
-
-[profile.release.package.symphonia-codec-aac]
-opt-level = 3
-
-[profile.release.package.symphonia-format-isomp4]
-opt-level = 3
-
-[profile.release.package.symphonia-metadata]
-opt-level = 3
-
-[profile.release.package.symphonia-utils-xiph]
-opt-level = 3

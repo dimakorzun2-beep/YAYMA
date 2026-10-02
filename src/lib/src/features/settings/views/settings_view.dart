@@ -1,15 +1,16 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:hotkey_manager/hotkey_manager.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
 import 'package:yayma/src/features/core/services/global_hotkey_service.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
+import 'package:yayma/src/features/core/views/widgets/common_ui.dart';
 import 'package:yayma/src/features/core/views/widgets/responsive.dart';
 import 'package:yayma/src/features/library/providers/library_provider.dart';
 import 'package:yayma/src/features/settings/views/lyrics_providers_dialog.dart';
@@ -40,41 +41,41 @@ class _SettingsViewState extends State<SettingsView> {
     _pathSignal = futureSignal(() async {
       final ctx = appContextSignal.value;
       if (ctx == null) return null;
-      return rust.getDownloadPath(ctx: ctx);
+      return await rust.getDownloadPath(ctx: ctx);
     });
     _cacheSizeSignal = futureSignal(() async {
       final ctx = appContextSignal.value;
       if (ctx == null) return 0;
-      return simple.getCacheSize(ctx: ctx);
+      return await simple.getCacheSize(ctx: ctx);
     });
     _trackCacheSizeSignal = futureSignal(() async {
       final ctx = appContextSignal.value;
       if (ctx == null) return 0;
-      return simple.getTrackCacheSize(ctx: ctx);
+      return await simple.getTrackCacheSize(ctx: ctx);
     });
     _versionSignal = futureSignal(() async {
-      return simple.getAppVersion();
+      return await simple.getAppVersion();
     });
     _discordRpcSignal = futureSignal(() async {
       final ctx = appContextSignal.value;
       if (ctx == null) return false;
-      return simple.isDiscordRpcEnabled(ctx: ctx);
+      return await simple.isDiscordRpcEnabled(ctx: ctx);
     });
     _customTitlebarSignal = futureSignal(() async {
       final ctx = appContextSignal.value;
       if (ctx == null) return true;
-      return simple.isCustomTitlebarEnabled(ctx: ctx);
+      return await simple.isCustomTitlebarEnabled(ctx: ctx);
     });
-    _autoHideNavbarSignal = futureSignal(() async {
-      return autoHideNavbarSignal.value;
-    });
-    _closeToTraySignal = futureSignal(() async {
-      return closeToTraySignal.value;
-    });
+    _autoHideNavbarSignal = futureSignal(
+      () => Future.value(autoHideNavbarSignal.value),
+    );
+    _closeToTraySignal = futureSignal(
+      () => Future.value(closeToTraySignal.value),
+    );
     _updateCheckSignal = futureSignal(() async {
       final ctx = appContextSignal.value;
       if (ctx == null) return true;
-      return simple.isUpdateCheckEnabled(ctx: ctx);
+      return await simple.isUpdateCheckEnabled(ctx: ctx);
     });
   }
 
@@ -539,22 +540,23 @@ class _GlobalHotkeysSettings extends StatefulWidget {
 }
 
 class _GlobalHotkeysSettingsState extends State<_GlobalHotkeysSettings> {
+  @override
+  void initState() {
+    super.initState();
+    // Pull fresh state from Rust every time settings are opened.
+    unawaited(GlobalHotkeyService.refresh());
+  }
+
   Future<void> _edit(GlobalHotkeyBinding binding) async {
-    final hotKey = await showDialog<HotKey>(
+    final combo = await showDialog<RecordedHotkey>(
       context: context,
       builder: (context) => _HotkeyDialog(binding: binding),
     );
-    if (!mounted || hotKey == null) return;
+    if (!mounted || combo == null) return;
 
-    final conflict = GlobalHotkeyService.conflictFor(binding.action, hotKey);
-    if (conflict != null) {
-      showAppError(
-        'Это сочетание уже назначено для действия «${conflict.action.title}»',
-      );
-      return;
-    }
-
-    await GlobalHotkeyService.updateBinding(binding.action, hotKey);
+    final error = await GlobalHotkeyService.updateBinding(binding.action, combo);
+    if (!mounted || error == null) return;
+    showAppError(error);
   }
 
   @override
@@ -630,8 +632,8 @@ class _GlobalHotkeysDialogState extends State<_GlobalHotkeysDialog> {
     final screenHeight = MediaQuery.sizeOf(context).height;
     final maxContentHeight = (screenHeight * 0.82).clamp(360.0, 760.0);
 
-    return AlertDialog(
-      title: const Text('Горячие клавиши'),
+    return AppDialog(
+      title: 'Горячие клавиши',
       content: ConstrainedBox(
         constraints: BoxConstraints(
           maxWidth: 560,
@@ -772,7 +774,7 @@ class _HotkeySettingRow extends StatelessWidget {
                       borderRadius: BorderRadius.circular(AppRadius.xs),
                     ),
                     child: Text(
-                      GlobalHotkeyService.formatHotKey(binding.hotKey),
+                      binding.formattedCombo,
                       style: TextStyle(
                         color: binding.enabled && hotkeysEnabled
                             ? cs.primary
@@ -808,18 +810,19 @@ class _HotkeyDialog extends StatefulWidget {
 }
 
 class _HotkeyDialogState extends State<_HotkeyDialog> {
-  late HotKey _hotKey;
+  RecordedHotkey? _combo;
 
-  @override
-  void initState() {
-    super.initState();
-    _hotKey = widget.binding.hotKey;
+  void _save() {
+    final combo = _combo;
+    if (combo != null) {
+      Navigator.pop(context, combo);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.binding.action.title),
+    return AppDialog(
+      title: widget.binding.action.title,
       content: SizedBox(
         width: 420,
         child: Column(
@@ -829,27 +832,151 @@ class _HotkeyDialogState extends State<_HotkeyDialog> {
             const Text('Нажмите нужное сочетание клавиш'),
             const SizedBox(height: 20),
             Center(
-              child: HotKeyRecorder(
-                initalHotKey: _hotKey,
-                onHotKeyRecorded: (hotKey) {
-                  setState(() => _hotKey = hotKey);
-                },
+              child: _HotkeyRecorder(
+                initial: _combo,
+                onRecorded: (combo) => setState(() => _combo = combo),
               ),
             ),
           ],
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Отмена'),
-        ),
+        AppDialog.cancelButton(context),
         FilledButton(
-          onPressed: () => Navigator.pop(context, _hotKey),
+          onPressed: _combo == null ? null : _save,
           child: const Text('Сохранить'),
         ),
       ],
     );
+  }
+}
+
+/// In-app hotkey capture: records the first non-modifier physical key while
+/// the field is focused, showing the pending combo live. Replaces the
+/// `HotKeyRecorder` widget from the removed `hotkey_manager` plugin.
+class _HotkeyRecorder extends StatefulWidget {
+  final RecordedHotkey? initial;
+  final ValueChanged<RecordedHotkey> onRecorded;
+
+  const _HotkeyRecorder({required this.initial, required this.onRecorded});
+
+  @override
+  State<_HotkeyRecorder> createState() => _HotkeyRecorderState();
+}
+
+class _HotkeyRecorderState extends State<_HotkeyRecorder> {
+  final _focusNode = FocusNode();
+  bool _focused = false;
+  RecordedHotkey? _combo;
+
+  @override
+  void initState() {
+    super.initState();
+    _combo = widget.initial;
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.handled;
+
+    final hardware = HardwareKeyboard.instance;
+    final combo = RecordedHotkey(
+      usbHidUsage: event.physicalKey.usbHidUsage,
+      ctrl: hardware.isControlPressed,
+      alt: hardware.isAltPressed,
+      shift: hardware.isShiftPressed,
+      meta: hardware.isMetaPressed,
+    );
+
+    if (_isModifierKey(event.logicalKey)) {
+      // Show the held modifiers live, but wait for a real key to record.
+      setState(() {});
+      _pending = combo;
+      return KeyEventResult.handled;
+    }
+
+    setState(() => _combo = combo);
+    _pending = null;
+    widget.onRecorded(combo);
+    return KeyEventResult.handled;
+  }
+
+  RecordedHotkey? _pending;
+
+  bool _isModifierKey(LogicalKeyboardKey key) {
+    return key == LogicalKeyboardKey.controlLeft ||
+        key == LogicalKeyboardKey.controlRight ||
+        key == LogicalKeyboardKey.altLeft ||
+        key == LogicalKeyboardKey.altRight ||
+        key == LogicalKeyboardKey.shiftLeft ||
+        key == LogicalKeyboardKey.shiftRight ||
+        key == LogicalKeyboardKey.metaLeft ||
+        key == LogicalKeyboardKey.metaRight;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final shown = _pending ?? _combo;
+
+    return Focus(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKeyEvent: _onKeyEvent,
+      onFocusChange: (focused) => setState(() => _focused = focused),
+      child: InkWell(
+        onTap: _focusNode.requestFocus,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        child: Container(
+          width: 240,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: _focused
+                ? cs.primary.withValues(alpha: 0.12)
+                : cs.onSurface.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            border: Border.all(
+              color: _focused ? cs.primary : cs.onSurface.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Text(
+            shown == null
+                ? 'Нажмите сочетание...'
+                : [
+                    if (shown.ctrl) 'Ctrl',
+                    if (shown.alt) 'Alt',
+                    if (shown.shift) 'Shift',
+                    if (shown.meta) 'Win',
+                    _keyLabel(shown.usbHidUsage),
+                  ].join(' + '),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: _focused ? cs.primary : cs.onSurface,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _keyLabel(int usage) {
+    // Live display during recording only; the canonical name comes back from
+    // Rust once the binding is saved. Without a mapping table here the raw
+    // usage is shown for yet-unmapped keys, which the save flow rejects.
+    const known = <int, String>{
+      0x0007002C: 'Пробел',
+      0x00070050: '←',
+      0x0007004F: '→',
+      0x00070052: '↑',
+      0x00070051: '↓',
+    };
+    return known[usage] ?? String.fromCharCode(usage & 0xFF).toUpperCase();
   }
 }
 

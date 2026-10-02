@@ -41,8 +41,19 @@ impl PlaybackEngine {
 
         let tx_clone = self.tx.clone();
         let error_callback = move |err: rodio::cpal::StreamError| {
-            tracing::error!("Audio stream error: {:?}", err);
-            let _ = tx_clone.try_send(crate::audio::commands::AudioMessage::RecreateStream);
+            match err {
+                // cpal already recovers an xrun internally (prepare/try_recover), so
+                // recreating the stream here would only drop audio — and on VMs where
+                // underruns are constant, turn every glitch into an endless recreate loop.
+                rodio::cpal::StreamError::BufferUnderrun => {
+                    tracing::debug!("Audio stream underrun (recovered by cpal)");
+                }
+                err => {
+                    tracing::error!("Audio stream error: {:?}", err);
+                    let _ = tx_clone
+                        .try_send(crate::audio::commands::AudioMessage::RecreateStream);
+                }
+            }
         };
 
         let (stream, sink) = construct_sink(device, &stream_config, sample_format, error_callback)?;
@@ -92,14 +103,6 @@ impl PlaybackEngine {
         if let Some(state) = self.state.read().as_ref() {
             state.sink.stop();
         }
-    }
-
-    pub fn is_paused(&self) -> bool {
-        self.state
-            .read()
-            .as_ref()
-            .map(|s| s.sink.is_paused())
-            .unwrap_or(true)
     }
 
     pub fn is_empty(&self) -> bool {

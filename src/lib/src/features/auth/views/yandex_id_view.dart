@@ -15,6 +15,7 @@ class YandexIdView extends StatefulWidget {
 
 class _YandexIdViewState extends State<YandexIdView> {
   late final WebViewController _controller;
+  Timer? _readyTimer;
   bool _isReady = false;
 
   @override
@@ -32,15 +33,21 @@ class _YandexIdViewState extends State<YandexIdView> {
 
     // Delay WebView initialization to wait for the transition animation to finish.
     // This prevents "Setting webview bounds failed" error on Windows.
-    unawaited(
-      Future<void>.delayed(const Duration(milliseconds: 450), () {
-        if (mounted) {
-          setState(() {
-            _isReady = true;
-          });
-        }
-      }),
-    );
+    // WebViewController has no dispose in webview_all, so only the
+    // delayed setState needs cancellation.
+    _readyTimer = Timer(const Duration(milliseconds: 450), () {
+      if (mounted) {
+        setState(() {
+          _isReady = true;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _readyTimer?.cancel();
+    super.dispose();
   }
 
   @override

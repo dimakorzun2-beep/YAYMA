@@ -61,7 +61,11 @@ class _GlobalNotificationListenerState extends State<GlobalNotificationListener>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   late final Animation<Offset> _offsetAnimation;
+  late final EffectCleanup _notificationEffect;
   AppNotification? _currentNotification;
+  Timer? _hideTimer;
+  int _showToken = 0;
+  bool _disposed = false;
   DateTime? _lastShown;
 
   @override
@@ -82,7 +86,7 @@ class _GlobalNotificationListenerState extends State<GlobalNotificationListener>
           ),
         );
 
-    effect(() {
+    _notificationEffect = effect(() {
       final notif = appNotificationSignal.value;
       if (notif == null) return;
       if (_lastShown != null && notif.timestamp.isBefore(_lastShown!)) return;
@@ -97,25 +101,44 @@ class _GlobalNotificationListenerState extends State<GlobalNotificationListener>
   }
 
   Future<void> _showNotification(AppNotification notif) async {
-    if (_controller.isAnimating) return;
+    if (_disposed) return;
+    // Drop while one is visible/animating: notifications are transient,
+    // no backlog.
+    if (_controller.isAnimating || _currentNotification != null) return;
 
+    final token = ++_showToken;
+    if (!mounted || _disposed) return;
     setState(() {
       _currentNotification = notif;
     });
 
+    if (!mounted || _disposed) return;
     await _controller.forward();
-    await Future<void>.delayed(const Duration(seconds: 4));
+    if (!mounted || _disposed || token != _showToken) return;
 
-    if (mounted) {
-      await _controller.reverse();
-      setState(() {
-        _currentNotification = null;
-      });
-    }
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 4), () {
+      if (!mounted || _disposed || token != _showToken) return;
+      unawaited(_hide(token));
+    });
+  }
+
+  Future<void> _hide(int token) async {
+    if (!mounted || _disposed || token != _showToken) return;
+    await _controller.reverse();
+    if (!mounted || _disposed || token != _showToken) return;
+    setState(() {
+      _currentNotification = null;
+    });
   }
 
   @override
   void dispose() {
+    _disposed = true;
+    _showToken++;
+    _hideTimer?.cancel();
+    _hideTimer = null;
+    _notificationEffect();
     _controller.dispose();
     super.dispose();
   }

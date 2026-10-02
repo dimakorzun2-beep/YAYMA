@@ -1,5 +1,6 @@
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
 import 'package:yayma/src/features/core/views/widgets/track_elements.dart';
 import 'package:yayma/src/rust/api/models.dart';
 
@@ -100,11 +101,11 @@ class _CommonMediaCardState extends State<CommonMediaCard> {
                             duration: const Duration(milliseconds: 200),
                             curve: Curves.easeOutBack,
                             scale: hovered ? 1.05 : 1.0,
-                            child: TrackCover(
-                              url: widget.coverUrl,
+                            child: AppCover(
+                              coverUrl: widget.coverUrl,
                               size: widget.size - 16,
-                              borderRadius: 16,
-                              isCircle: widget.isCircle,
+                              radius: 16,
+                              circle: widget.isCircle,
                               shape: widget.isCircle ? null : Shapes.slanted,
                             ),
                           ),

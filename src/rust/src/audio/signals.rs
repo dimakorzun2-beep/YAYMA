@@ -11,13 +11,13 @@ use crate::util::reactive::Signal;
 #[derive(Clone)]
 pub struct AudioSignals {
     pub is_playing: Signal<bool>,
-    pub is_paused: Signal<bool>,
     pub is_stopped: Signal<bool>,
     pub is_buffering: Signal<bool>,
     pub current_track: Signal<Option<Track>>,
     pub current_track_id: Signal<Option<String>>,
     pub title: Signal<Option<String>>,
     pub artists: Signal<Option<String>>,
+    // Mirror of engine.pos(), published alongside TrackProgress.
     pub position_ms: Signal<u64>,
     pub duration_ms: Signal<u64>,
     pub progress_ratio: Signal<f32>,
@@ -54,7 +54,6 @@ impl AudioSignals {
         let (progress_tx, progress_rx) = watch::channel(0u32);
         Self {
             is_playing: Signal::new(false),
-            is_paused: Signal::new(false),
             is_stopped: Signal::new(true),
             is_buffering: Signal::new(false),
             current_track: Signal::new(None),
@@ -117,7 +116,6 @@ impl AudioSignals {
 
     pub fn set_playing(&self, playing: bool) {
         self.is_playing.set(playing);
-        self.is_paused.set(!playing && !self.is_stopped.get());
         self.changed.send_replace(());
     }
 
@@ -137,14 +135,6 @@ impl AudioSignals {
 
     pub fn update_buffered_ratio(&self, ratio: f32) {
         self.buffered_ratio.set(ratio.clamp(0.0, 1.0));
-    }
-
-    pub fn update_queue(&self, queue: Vector<Track>, index: usize) {
-        let len = queue.len();
-        self.queue.set(queue);
-        self.queue_index.set(index);
-        self.queue_length.set(len);
-        self.changed.send_replace(());
     }
 
     pub fn set_queue(&self, queue: Vector<Track>, history: Vector<Track>, index: usize) {

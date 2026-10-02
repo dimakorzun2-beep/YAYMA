@@ -5,12 +5,12 @@ import 'package:flutter/services.dart';
 import 'package:m3e_core/m3e_core.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/app_context_menu.dart';
-import 'package:yayma/src/features/core/views/widgets/common_ui.dart';
+import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
 import 'package:yayma/src/features/core/views/widgets/download_menu.dart';
 import 'package:yayma/src/features/core/views/widgets/lyrics_view.dart';
 import 'package:yayma/src/features/core/views/widgets/responsive.dart';
@@ -58,7 +58,6 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
   final ValueNotifier<bool> _isPressed = ValueNotifier(false);
   final ValueNotifier<bool> _isTitleHovered = ValueNotifier(false);
   final ValueNotifier<bool> _isMenuOpen = ValueNotifier(false);
-  final GlobalKey _coverKey = GlobalKey();
 
   @override
   void dispose() {
@@ -70,27 +69,28 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
   }
 
   void _handleTap() {
-    if (widget.leading is TrackCover) {
-      final cover = widget.leading! as TrackCover;
-      flyCoverToPlayer(
-        context,
-        coverKey: _coverKey,
-        coverUrl: cover.url,
-        borderRadius: cover.isCircle ? cover.size / 2 : cover.borderRadius,
-      );
-    }
     widget.onTap?.call();
   }
 
   Widget _adjustLeading(Widget leading, bool isNarrow) {
-    if (isNarrow && leading is TrackCover && leading.size == 64) {
-      return TrackCover(
+    if (isNarrow && leading is AppCover && leading.size == 64) {
+      return AppCover(
+        key: leading.key,
+        coverUrl: leading.coverUrl ?? leading.url,
         url: leading.url,
+        localUri: leading.localUri,
         size: 48,
-        borderRadius: leading.borderRadius,
-        isCircle: leading.isCircle,
-        canExpand: leading.canExpand,
+        circle: leading.circle,
         heroTag: leading.heroTag,
+        onTap: leading.onTap,
+        borderRadius: leading.borderRadius,
+        radius: leading.radius,
+        shape: leading.shape,
+        canExpand: leading.canExpand,
+        hoverEnabled: leading.hoverEnabled,
+        hoverScale: leading.hoverScale,
+        fit: leading.fit,
+        placeholderIcon: leading.placeholderIcon,
       );
     }
     return leading;
@@ -363,8 +363,8 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
                             child: Row(
                               children: [
                                 if (widget.leading != null) ...[
-                                  KeyedSubtree(
-                                    key: _coverKey,
+                                  _LeadingPlayingBadge(
+                                    trackId: widget.trackId,
                                     child: _adjustLeading(
                                       widget.leading!,
                                       isNarrow,
@@ -395,12 +395,10 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
                                                 onTap: widget.onTitleTap,
                                                 child: SignalBuilder(
                                                   builder: (context) {
-                                                    final currentTrackId =
+                                                    final isCurrent =
                                                         currentTrackIdSignal
-                                                            .value;
-                                                    final isPlaying =
-                                                        currentTrackId ==
-                                                        widget.trackId;
+                                                                .value ==
+                                                            widget.trackId;
 
                                                     return ValueListenableBuilder<
                                                       bool
@@ -416,16 +414,18 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
                                                             return Text(
                                                               widget.title,
                                                               style: TextStyle(
-                                                                color: isPlaying
+                                                                color: isCurrent
                                                                     ? Theme.of(
                                                                         context,
                                                                       ).colorScheme.primary
                                                                     : Theme.of(
                                                                         context,
                                                                       ).colorScheme.onSurface,
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .bold,
+                                                                fontWeight: isCurrent
+                                                                    ? FontWeight
+                                                                          .bold
+                                                                    : FontWeight
+                                                                          .w400,
                                                                 fontSize:
                                                                     isNarrow
                                                                     ? 14
@@ -531,6 +531,65 @@ class _CommonTrackTileState extends State<CommonTrackTile> {
               },
             ),
           ),
+        );
+      },
+    );
+  }
+}
+
+/// Badge over leading (usually the cover): visible only on the current track.
+/// While playing — animated equalizer, while paused — static.
+class _LeadingPlayingBadge extends StatelessWidget {
+  final String trackId;
+  final Widget child;
+
+  const _LeadingPlayingBadge({required this.trackId, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return SignalBuilder(
+      builder: (context) {
+        final isCurrent = currentTrackIdSignal.value == trackId;
+        if (!isCurrent) return child;
+        final isPlaying = isPlayingSignal.value;
+        final scheme = Theme.of(context).colorScheme;
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            child,
+            Positioned(
+              right: -6,
+              bottom: -6,
+              child: Tooltip(
+                message: isPlaying ? 'Сейчас играет' : 'Текущий трек на паузе',
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: scheme.primary,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: scheme.surface,
+                      width: 2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.3),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: TrackPlayingIndicator(
+                    isPlaying: isPlaying,
+                    height: 12,
+                    color: scheme.onPrimary,
+                  ),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );

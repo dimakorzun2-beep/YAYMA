@@ -8,9 +8,10 @@ import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/layout/mobile_mini_player.dart';
+import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
 import 'package:yayma/src/features/core/views/widgets/common_ui.dart';
+import 'package:yayma/src/features/core/views/widgets/hover_scale.dart';
 import 'package:yayma/src/features/core/views/widgets/quality_selector.dart';
-import 'package:yayma/src/features/core/views/widgets/rust_cached_image.dart';
 import 'package:yayma/src/features/core/views/widgets/track_elements.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
 import 'package:yayma/src/rust/api/models.dart';
@@ -143,76 +144,62 @@ class _TrackInfoState extends State<_TrackInfo> {
 
         return Row(
           children: [
-            MouseRegion(
+            HoverScale(
               cursor: hasAlbum
                   ? SystemMouseCursors.click
                   : SystemMouseCursors.basic,
-              onEnter: (_) => _isCoverHovered.value = true,
-              onExit: (_) => _isCoverHovered.value = false,
-              child: GestureDetector(
-                onTap: () {
-                  if (hasAlbum) {
-                    navigateTo(AppSection.album, meta.albumId);
-                  }
-                },
-                child: PlayerCoverRectReporter(
-                  child: AnimatedScale(
-                    scale: isPlaying ? 1.0 : 0.96,
-                    duration: const Duration(milliseconds: 350),
-                    curve: Curves.easeInOutCubic,
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 400),
-                      child: ClipRRect(
-                        key: ValueKey(meta.coverUrl),
-                        borderRadius: BorderRadius.circular(AppRadius.sm),
-                        child: Stack(
-                          children: [
-                            if (meta.coverUrl != null)
-                              RustCachedImage(
-                                imageUrl: meta.coverUrl,
-                                width: widget.coverSize,
-                                height: widget.coverSize,
-                                errorWidget: Container(
-                                  width: widget.coverSize,
-                                  height: widget.coverSize,
-                                  color: cs.onSurface.withValues(alpha: 0.1),
-                                ),
-                              )
-                            else
-                              Container(
-                                width: widget.coverSize,
-                                height: widget.coverSize,
-                                color: cs.onSurface.withValues(alpha: 0.1),
-                              ),
-                            if (hasAlbum)
-                              Positioned.fill(
-                                child: ValueListenableBuilder<bool>(
-                                  valueListenable: _isCoverHovered,
-                                  builder: (context, hovered, _) {
-                                    return AnimatedOpacity(
-                                      duration: const Duration(
-                                        milliseconds: 150,
-                                      ),
-                                      opacity: hovered ? 1 : 0,
-                                      child: Container(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.45,
-                                        ),
-                                        alignment: Alignment.center,
-                                        child: Icon(
-                                          Icons.album_rounded,
-                                          color: cs.onSurface,
-                                          size: 24,
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                          ],
-                        ),
+              hoverScale: 1,
+              duration: const Duration(milliseconds: 150),
+              curve: Curves.easeOut,
+              onTap: hasAlbum
+                  ? () => navigateTo(AppSection.album, meta.albumId)
+                  : null,
+              onHoverChanged: (h) => _isCoverHovered.value = h,
+              child: AnimatedScale(
+                scale: isPlaying ? 1.0 : 0.96,
+                duration: const Duration(milliseconds: 350),
+                curve: Curves.easeInOutCubic,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 400),
+                  child: Stack(
+                    key: ValueKey(meta.coverUrl),
+                    children: [
+                      AppCover(
+                        coverUrl: meta.coverUrl,
+                        size: widget.coverSize,
+                        radius: AppRadius.sm,
                       ),
-                    ),
+                      if (hasAlbum)
+                        Positioned.fill(
+                          child: ValueListenableBuilder<bool>(
+                            valueListenable: _isCoverHovered,
+                            builder: (context, hovered, _) {
+                              return AnimatedOpacity(
+                                duration: const Duration(
+                                  milliseconds: 150,
+                                ),
+                                opacity: hovered ? 1 : 0,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(
+                                      alpha: 0.45,
+                                    ),
+                                    borderRadius: BorderRadius.circular(
+                                      AppRadius.sm,
+                                    ),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Icon(
+                                    Icons.album_rounded,
+                                    color: cs.onSurface,
+                                    size: 24,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ),

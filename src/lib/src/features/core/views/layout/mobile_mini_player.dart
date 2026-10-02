@@ -7,8 +7,8 @@ import 'package:signals_flutter/signals_flutter.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
+import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
 import 'package:yayma/src/features/core/views/widgets/common_ui.dart';
-import 'package:yayma/src/features/core/views/widgets/rust_cached_image.dart';
 import 'package:yayma/src/features/core/views/widgets/track_elements.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
 
@@ -143,12 +143,13 @@ class _MobileMiniPlayerState extends State<MobileMiniPlayer> {
 
         final meta = trackMetadataSignal();
 
-        // The app shell applies the Android system bottom inset via SafeArea.
-        // Keep only the visual gap here so the inset is not applied twice.
+        // Visual gap only: the Android system navigation inset is applied by
+        // the app shell (Positioned bottom offset in layout.dart), so it
+        // must not be added here a second time.
         const bottomPadding = 8.0;
 
         return Padding(
-          padding: EdgeInsets.fromLTRB(16, 0, 16, bottomPadding),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, bottomPadding),
           child: SizedBox(
             height: 80,
             width: defaultWidth,
@@ -285,7 +286,6 @@ class _MobileCover extends StatelessWidget {
   Widget build(BuildContext context) {
     return SignalBuilder(
       builder: (context) {
-        final cs = Theme.of(context).colorScheme;
         final meta = trackMetadataSignal();
         final isPlaying = isPlayingSignal();
         if (meta.id == null) return const SizedBox();
@@ -302,26 +302,10 @@ class _MobileCover extends StatelessWidget {
             scale: isPlaying ? 1.0 : 0.96,
             duration: const Duration(milliseconds: 350),
             curve: Curves.easeInOutCubic,
-            child: PlayerCoverRectReporter(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(AppRadius.sm),
-                child: meta.coverUrl != null
-                    ? RustCachedImage(
-                        imageUrl: meta.coverUrl,
-                        width: coverSize,
-                        height: coverSize,
-                        errorWidget: Container(
-                          width: coverSize,
-                          height: coverSize,
-                          color: cs.onSurface.withValues(alpha: 0.1),
-                        ),
-                      )
-                    : Container(
-                        width: coverSize,
-                        height: coverSize,
-                        color: cs.onSurface.withValues(alpha: 0.1),
-                      ),
-              ),
+            child: AppCover(
+              coverUrl: meta.coverUrl,
+              size: coverSize,
+              radius: AppRadius.sm,
             ),
           ),
         );

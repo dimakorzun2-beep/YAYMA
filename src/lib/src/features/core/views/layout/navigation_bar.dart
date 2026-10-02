@@ -4,14 +4,15 @@ import 'dart:ui' as ui;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:signals_flutter/signals_flutter.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/init.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/features/auth/views/yandex_id_view.dart';
 import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/visual_effects_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/rust_cached_image.dart';
-import 'package:yayma/src/features/home/providers/home_provider.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
+import 'package:yayma/src/features/playback/providers/wave_provider.dart';
 import 'package:yayma/src/features/playback/views/wave_view.dart';
 import 'package:yayma/src/rust/api/models.dart';
 
@@ -90,6 +91,10 @@ class _FloatingNavBarState extends State<FloatingNavBar>
             _isHovered ||
             _isAccountMenuOpen;
         final isNarrow = MediaQuery.sizeOf(context).width < 600;
+        // Edge-to-edge: app draws behind the Android system navigation bar,
+        // so lift the floating navbar above the 3-button/gesture bar.
+        // viewPadding stays stable when the keyboard opens.
+        final systemBottom = MediaQuery.viewPaddingOf(context).bottom;
 
         const alpha = 0.5;
 
@@ -124,7 +129,7 @@ class _FloatingNavBarState extends State<FloatingNavBar>
                       if (isWaveActive) {
                         unawaited(PlaybackController.togglePlay());
                       } else {
-                        unawaited(HomeController.startMyWave());
+                        unawaited(WaveController.startMyWave());
                       }
                     },
                     style: IconButton.styleFrom(
@@ -180,7 +185,11 @@ class _FloatingNavBarState extends State<FloatingNavBar>
           onExit: (_) => setState(() => _isNavbarHovered = false),
           child: Padding(
             padding: isNarrow
-                ? const EdgeInsets.only(bottom: 12, left: 24, right: 24)
+                ? EdgeInsets.only(
+                    bottom: 12 + systemBottom,
+                    left: 24,
+                    right: 24,
+                  )
                 : const EdgeInsets.only(
                     left: 16,
                     right: 48,
@@ -253,6 +262,9 @@ class _FloatingNavBarState extends State<FloatingNavBar>
   @override
   void dispose() {
     _showWaveTimer?.cancel();
+    _showWaveTimer = null;
+    _overlayEntry?.remove();
+    _overlayEntry = null;
     super.dispose();
   }
 }
@@ -478,7 +490,7 @@ class _AccountMenuDialog extends StatelessWidget {
               icon: Icons.logout_rounded,
               title: 'Выйти из аккаунта',
               onTap: () {
-                unawaited(logout());
+                unawaited(AppInit.logout());
                 Navigator.pop(context);
               },
             ),

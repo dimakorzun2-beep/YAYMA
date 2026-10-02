@@ -1,7 +1,6 @@
-import 'dart:async';
-
 import 'package:audio_service/audio_service.dart';
 import 'package:signals_flutter/signals_flutter.dart';
+import 'package:yayma/src/features/core/services/debouncer.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
 import 'package:yayma/src/rust/api/models.dart' as rust;
 
@@ -16,7 +15,7 @@ class YaymaAudioHandler extends BaseAudioHandler {
   // an index that's momentarily out of bounds, crashing the app on some
   // Android versions (observed on 11). Debounce to collapse rapid
   // transitions into a single native call.
-  Timer? _playbackStateDebounce;
+  final Debouncer _playbackStateDebouncer = Debouncer();
 
   void _initSignals() {
     // Sync metadata
@@ -110,10 +109,9 @@ class YaymaAudioHandler extends BaseAudioHandler {
         updatePosition: Duration(milliseconds: currentPosition.toInt()),
       );
 
-      _playbackStateDebounce?.cancel();
-      _playbackStateDebounce = Timer(
-        const Duration(milliseconds: 120),
+      _playbackStateDebouncer.run(
         () => playbackState.add(newState),
+        const Duration(milliseconds: 120),
       );
     });
   }

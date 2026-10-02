@@ -7,10 +7,10 @@ import 'package:yayma/src/features/core/providers/navigation_provider.dart';
 import 'package:yayma/src/features/core/providers/notification_provider.dart';
 import 'package:yayma/src/features/core/theme/app_tokens.dart';
 import 'package:yayma/src/features/core/views/widgets/app_context_menu.dart';
+import 'package:yayma/src/features/core/views/widgets/app_cover.dart';
 import 'package:yayma/src/features/core/views/widgets/common_ui.dart';
 import 'package:yayma/src/features/core/views/widgets/download_menu.dart';
 import 'package:yayma/src/features/core/views/widgets/media_card.dart';
-import 'package:yayma/src/features/core/views/widgets/track_elements.dart';
 import 'package:yayma/src/features/core/views/widgets/track_tile.dart';
 import 'package:yayma/src/features/library/providers/library_provider.dart';
 import 'package:yayma/src/features/playback/providers/playback_provider.dart';
@@ -72,11 +72,8 @@ class _LibraryViewState extends State<LibraryView>
         builder: (context) => StatefulBuilder(
           builder: (context, setState) {
             final cs = Theme.of(context).colorScheme;
-            return AlertDialog(
-              title: Text(
-                'Новый плейлист',
-                style: TextStyle(color: cs.onSurface),
-              ),
+            return AppDialog(
+              title: 'Новый плейлист',
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -109,10 +106,7 @@ class _LibraryViewState extends State<LibraryView>
                 ],
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Отмена'),
-                ),
+                AppDialog.cancelButton(context),
                 ElevatedButton(
                   onPressed: () async {
                     if (controller.text.isNotEmpty) {
@@ -137,7 +131,7 @@ class _LibraryViewState extends State<LibraryView>
             );
           },
         ),
-      ),
+      ).whenComplete(controller.dispose),
     );
   }
 
@@ -181,7 +175,11 @@ class _LibraryViewState extends State<LibraryView>
                     ? const SizedBox.shrink()
                     : const Text('Создать плейлист'),
                 style: M3EButtonStyle.outlined,
-                size: isNarrow ? M3EButtonSize.sm : M3EButtonSize.md,
+                // In icon-only mode the package still inserts the icon-label
+                // gap, which pushes the icon off-center; drop the gap.
+                size: isNarrow
+                    ? M3EButtonSize.fromBase(M3EButtonSize.sm, iconGap: 0)
+                    : M3EButtonSize.md,
                 decoration: M3EButtonDecoration.styleFrom(
                   foregroundColor: Theme.of(context).colorScheme.primary,
                 ),
@@ -281,20 +279,14 @@ class _LikedTracksTabState extends State<_LikedTracksTab> {
         context: context,
         builder: (context) {
           final cs = Theme.of(context).colorScheme;
-          return AlertDialog(
-            title: Text(
-              'Удалить всё?',
-              style: TextStyle(color: cs.onSurface),
-            ),
+          return AppDialog(
+            title: 'Удалить всё?',
             content: Text(
               'Вы действительно хотите удалить все скачанные любимые треки?',
               style: TextStyle(color: cs.onSurfaceVariant),
             ),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Отмена'),
-              ),
+              AppDialog.cancelButton(context),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: cs.error,
@@ -447,7 +439,7 @@ class _LikedTracksTabState extends State<_LikedTracksTab> {
                         ),
                       ),
                     )
-                  : M3ECardList.builder(
+                  : M3ESegmentedList.builder(
                       haptic: M3EHapticFeedback.light,
                       itemCount: tracks.length,
                       listPadding: const EdgeInsets.only(bottom: 140),
@@ -467,7 +459,7 @@ class _LikedTracksTabState extends State<_LikedTracksTab> {
                           version: track.version,
                           artists: track.artists,
                           albumId: track.albumId,
-                          leading: TrackCover(url: track.coverUrl),
+                          leading: AppCover(coverUrl: track.coverUrl),
                           trailing: Text(
                             formatDuration(track.durationMs),
                             style: TextStyle(
@@ -694,6 +686,22 @@ class _LikedAlbumsTab extends StatelessWidget {
 class _LikedArtistsTab extends StatelessWidget {
   const _LikedArtistsTab();
 
+  static Future<void> _removeLikedArtist(
+    BuildContext context,
+    String artistId,
+  ) async {
+    final success = await removeLikedArtistAction(artistId);
+    if (!context.mounted) return;
+    if (success) {
+      likedArtistsSignal.value = likedArtistsSignal.value
+          .where((a) => a.id != artistId)
+          .toList();
+      showAppSuccess('Исполнитель удалён из любимых');
+    } else {
+      showAppError('Ошибка при обновлении любимых исполнителей');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
@@ -732,12 +740,35 @@ class _LikedArtistsTab extends StatelessWidget {
           itemCount: artists.length,
           itemBuilder: (context, index) {
             final artist = artists[index];
-            return CommonMediaCard(
-              title: artist.name,
-              coverUrl: artist.coverUrl,
-              isCircle: true,
-              size: 140,
-              onTap: () => navigateTo(AppSection.artist, artist.id),
+            return Stack(
+              children: [
+                CommonMediaCard(
+                  title: artist.name,
+                  coverUrl: artist.coverUrl,
+                  isCircle: true,
+                  size: 140,
+                  onTap: () => navigateTo(AppSection.artist, artist.id),
+                ),
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: IconButton(
+                    onPressed: () => unawaited(
+                      _removeLikedArtist(context, artist.id),
+                    ),
+                    tooltip: 'Убрать из любимых',
+                    icon: const Icon(Icons.favorite_rounded, size: 18),
+                    style: IconButton.styleFrom(
+                      minimumSize: const Size(36, 36),
+                      iconSize: 18,
+                      backgroundColor: Theme.of(
+                        context,
+                      ).colorScheme.surface.withValues(alpha: 0.85),
+                      foregroundColor: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ],
             );
           },
         );
@@ -798,8 +829,8 @@ class _PlaylistCardState extends State<_PlaylistCard> {
                         ),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(AppRadius.md),
-                          child: TrackCover(
-                            url: playlist.coverUrl,
+                          child: AppCover(
+                            coverUrl: playlist.coverUrl,
                             size: 200,
                             borderRadius: AppRadius.md,
                           ),

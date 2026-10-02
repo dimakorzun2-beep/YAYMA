@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
-import 'package:yayma/src/features/auth/providers/auth_provider.dart';
+import 'package:yayma/src/app/session.dart';
 import 'package:yayma/src/rust/api/simple.dart';
 
 /// Cover size presets Yandex's avatar CDN actually serves, per the official
